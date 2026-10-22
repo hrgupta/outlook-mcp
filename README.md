@@ -318,6 +318,24 @@ configured `timezone`; responses are always UTC.
 | `outlook_set_inbox_override` | Upsert a per-sender Focused Inbox override (`focused` / `other`). Case-insensitive sender matching; PATCH-if-exists, else POST. |
 | `outlook_delete_inbox_override` | Delete a Focused Inbox override by ID. |
 
+### Inbox Rules
+
+Server-side rules: they run whether or not any Outlook client is open.
+
+| Tool | Description |
+|------|-------------|
+| `outlook_list_rules` | List inbox rules in execution order, with conditions and actions. |
+| `outlook_create_rule` | Create a rule from sender/subject/body/attachment conditions and move, copy, mark-read, delete, forward, categorize or stop-processing actions. |
+| `outlook_update_rule` | Change a rule's name, enabled state, sequence, target folder or mark-read action. Other actions are preserved. |
+| `outlook_delete_rule` | Delete a rule by ID. Irreversible. |
+
+The three write tools are gated by the `mail_rules` permission category — add it to
+`allow_categories` (or leave `allow_categories` unset for a full read-write install).
+Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on the
+token; the default read-write consent set requests `MailboxSettings.Read` only, so a
+stock install can list rules but not change them. Add the write scope to your app
+registration and re-consent before using the write tools.
+
 ### Calendar Read
 
 | Tool | Description |

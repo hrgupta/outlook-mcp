@@ -103,6 +103,10 @@ Pass `concise=True` to read tools (`outlook_list_inbox`, `outlook_read_message`,
 - `outlook_list_inbox_overrides` — List Focused Inbox per-sender override rules
 - `outlook_set_inbox_override` — Upsert a per-sender override (focused/other)
 - `outlook_delete_inbox_override` — Delete an override by ID
+- `outlook_list_rules` — List inbox rules in execution order (server-side; runs with no client open)
+- `outlook_create_rule` — Create a rule: sender/subject/body/attachment conditions, then move/copy/mark-read/delete/forward/categorize/stop actions
+- `outlook_update_rule` — Rename, enable/disable, resequence or re-point a rule; its other actions are preserved
+- `outlook_delete_rule` — Delete a rule by ID (irreversible)
 
 ### Calendar
 - `outlook_list_events` — List events in date range (expands recurring); each carries `type` (`occurrence`/`exception` for a series instance vs `singleInstance`; a `seriesMaster` never appears on a listing — use `outlook_get_event`) and `show_as` (the free/busy status); `calendar` reads a secondary calendar by name or ID (default calendar when omitted); a cursor continues the same calendar. `concise=True` drops `type` and `show_as`

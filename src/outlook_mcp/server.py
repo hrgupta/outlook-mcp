@@ -49,6 +49,7 @@ from outlook_mcp.tools import (
     mail_drafts,
     mail_folders,
     mail_read,
+    mail_rules,
     mail_thread,
     mail_triage,
     mail_write,
@@ -673,6 +674,116 @@ async def outlook_delete_inbox_override(
     return await inference_overrides.delete_inbox_override(
         client.sdk_client, override_id, config=config
     )
+
+
+# ── Mail Rule Tools ────────────────────────────────────
+
+
+@mcp.tool()
+@_wrap_tool_errors
+async def outlook_list_rules(ctx: Context) -> dict:
+    """List all inbox rules, sorted by execution order (sequence).
+
+    Rules are server-side: they run whether or not any Outlook client is open.
+    Each rule pairs conditions (what an incoming message must match) with
+    actions (what to do when it matches). Use outlook_create_rule to add one.
+    """
+    client = _get_graph_client(ctx)
+    return await mail_rules.list_rules(client.sdk_client)
+
+
+@mcp.tool()
+@_wrap_tool_errors
+async def outlook_create_rule(
+    ctx: Context,
+    name: str,
+    from_addresses: list[str] | None = None,
+    subject_contains: list[str] | None = None,
+    body_contains: list[str] | None = None,
+    sender_contains: list[str] | None = None,
+    has_attachments: bool | None = None,
+    importance: str | None = None,
+    move_to_folder: str | None = None,
+    copy_to_folder: str | None = None,
+    mark_as_read: bool | None = None,
+    delete: bool | None = None,
+    permanent_delete: bool | None = None,
+    forward_to: list[str] | None = None,
+    assign_categories: list[str] | None = None,
+    stop_processing_rules: bool | None = None,
+    is_enabled: bool = True,
+    sequence: int | None = None,
+) -> dict:
+    """Create an inbox rule from conditions and actions.
+
+    At least one condition and one action are required. Conditions:
+    from_addresses, subject_contains, body_contains, sender_contains,
+    has_attachments, importance. Actions: move_to_folder / copy_to_folder
+    (display name or id), mark_as_read, delete, permanent_delete, forward_to,
+    assign_categories, stop_processing_rules.
+    """
+    client = _get_graph_client(ctx)
+    config = _get_config(ctx)
+    return await mail_rules.create_rule(
+        client.sdk_client,
+        name,
+        config=config,
+        from_addresses=from_addresses,
+        subject_contains=subject_contains,
+        body_contains=body_contains,
+        sender_contains=sender_contains,
+        has_attachments=has_attachments,
+        importance=importance,
+        move_to_folder=move_to_folder,
+        copy_to_folder=copy_to_folder,
+        mark_as_read=mark_as_read,
+        delete=delete,
+        permanent_delete=permanent_delete,
+        forward_to=forward_to,
+        assign_categories=assign_categories,
+        stop_processing_rules=stop_processing_rules,
+        is_enabled=is_enabled,
+        sequence=sequence,
+    )
+
+
+@mcp.tool()
+@_wrap_tool_errors
+async def outlook_update_rule(
+    ctx: Context,
+    rule_id: str,
+    name: str | None = None,
+    is_enabled: bool | None = None,
+    sequence: int | None = None,
+    move_to_folder: str | None = None,
+    mark_as_read: bool | None = None,
+) -> dict:
+    """Update an existing inbox rule (partial patch — only provided fields change).
+
+    Pass is_enabled=False to disable a rule without deleting it. `move_to_folder`
+    accepts display names, well-known names, or Graph IDs.
+    """
+    client = _get_graph_client(ctx)
+    config = _get_config(ctx)
+    return await mail_rules.update_rule(
+        client.sdk_client,
+        rule_id,
+        config=config,
+        name=name,
+        is_enabled=is_enabled,
+        sequence=sequence,
+        move_to_folder=move_to_folder,
+        mark_as_read=mark_as_read,
+    )
+
+
+@mcp.tool()
+@_wrap_tool_errors
+async def outlook_delete_rule(ctx: Context, rule_id: str) -> dict:
+    """Delete an inbox rule by ID. Irreversible."""
+    client = _get_graph_client(ctx)
+    config = _get_config(ctx)
+    return await mail_rules.delete_rule(client.sdk_client, rule_id, config=config)
 
 
 # ── Calendar Read Tools ─────────────────────────────────

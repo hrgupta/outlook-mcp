@@ -6,6 +6,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Inbox rules: `outlook_list_rules`, `outlook_create_rule`, `outlook_update_rule`,
+  `outlook_delete_rule`.** Graph's `/me/mailFolders/inbox/messageRules` was previously
+  documented here as a dead end on personal accounts; it is not (see ROADMAP). Rules are
+  server-side, so they keep running with every client closed. `outlook_update_rule` reads the
+  rule before patching it, because Graph replaces a rule's `actions` object wholesale — a
+  re-point that did not send the other actions back would silently clear them. The three write
+  tools sit behind a new `mail_rules` permission category and need `MailboxSettings.ReadWrite`
+  on the token (the default consent set asks only for `MailboxSettings.Read`). Tool count
+  68 → 72; tool-surface ceiling raised 13,300 → 14,400 (measured 14,103).
+
 ### Fixed
 
 - **Failures outside the Graph SDK reach the model with their text and a remedy.** Only SDK
