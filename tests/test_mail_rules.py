@@ -1,0 +1,358 @@
+"""Tests for inbox rule CRUD tools (``/me/mailFolders/inbox/messageRules``)."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from outlook_mcp.config import Config
+from outlook_mcp.errors import PermissionDeniedError, ReadOnlyError
+from outlook_mcp.tools.mail_rules import (
+    create_rule,
+    delete_rule,
+    list_rules,
+    update_rule,
+)
+from tests.test_write_payloads_reach_the_wire import assert_on_wire
+
+_CFG = Config(client_id="test")
+_CFG_RO = Config(client_id="test", read_only=True)
+_CFG_ALLOW_RULES = Config(client_id="test", allow_categories=["mail_rules"])
+_CFG_ALLOW_OTHER = Config(client_id="test", allow_categories=["mail_send"])
+
+_OLD_FOLDER_ID = "AQMkADAwATM0MDAAMS1iMTYzLTExAGNlLTAwAi0wMAoALgAAAyK-old-folder-id-0000"
+_NEW_FOLDER_ID = "AQMkADAwATM0MDAAMS1iMTYzLTExAGNlLTAwAi0wMAoALgAAAyK-new-folder-id-0000"
+
+
+def _make_actions(**kwargs):
+    from msgraph.generated.models.message_rule_actions import MessageRuleActions
+
+    actions = MessageRuleActions()
+    for key, value in kwargs.items():
+        setattr(actions, key, value)
+    return actions
+
+
+def _make_rule(
+    rule_id: str = "rule-1",
+    name: str = "Move newsletters to Archive",
+    sequence: int = 3,
+    is_enabled: bool = True,
+    actions=None,
+):
+    rule = MagicMock()
+    rule.id = rule_id
+    rule.display_name = name
+    rule.sequence = sequence
+    rule.is_enabled = is_enabled
+    rule.is_read_only = False
+    rule.actions = actions
+    return rule
+
+
+def _wire_rules(mock_client):
+    """Return the ``message_rules`` collection builder for a mock client."""
+    return mock_client.me.mail_folders.by_mail_folder_id.return_value.message_rules
+
+
+def _wire_listing(collection, sequences):
+    """Wire the collection's GET with rules carrying these sequence numbers."""
+    listing = MagicMock()
+    listing.value = [_make_rule(rule_id=f"r{i}", sequence=s) for i, s in enumerate(sequences)]
+    collection.get = AsyncMock(return_value=listing)
+    return collection
+
+
+def _wire_single_rule(mock_client, *, current=None, patched=None):
+    """Return the single-rule builder wired for get/patch/delete."""
+    collection = _wire_rules(mock_client)
+    builder = collection.by_message_rule_id.return_value
+    builder.get = AsyncMock(return_value=current)
+    builder.patch = AsyncMock(return_value=patched)
+    builder.delete = AsyncMock(return_value=None)
+    return builder
+
+
+class TestListRules:
+    async def test_empty(self):
+        client = MagicMock()
+        response = MagicMock()
+        response.value = []
+        _wire_rules(client).get = AsyncMock(return_value=response)
+
+        assert await list_rules(client) == {"count": 0, "rules": []}
+
+    async def test_sorted_by_sequence_and_mapped(self):
+        client = MagicMock()
+        response = MagicMock()
+        response.value = [
+            _make_rule(rule_id="b", name="Second", sequence=9),
+            _make_rule(rule_id="a", name="First", sequence=2),
+        ]
+        _wire_rules(client).get = AsyncMock(return_value=response)
+
+        result = await list_rules(client)
+
+        assert result["count"] == 2
+        assert [r["id"] for r in result["rules"]] == ["a", "b"]
+        assert result["rules"][0] == {
+            "id": "a",
+            "display_name": "First",
+            "is_enabled": True,
+            "sequence": 2,
+            "is_read_only": False,
+        }
+
+    async def test_names_are_sanitized(self):
+        """A rule name is caller-visible text; control chars are scrubbed."""
+        client = MagicMock()
+        response = MagicMock()
+        response.value = [_make_rule(name="spam\x00rule\x07")]
+        _wire_rules(client).get = AsyncMock(return_value=response)
+
+        result = await list_rules(client)
+
+        assert "\x00" not in result["rules"][0]["display_name"]
+        assert "\x07" not in result["rules"][0]["display_name"]
+
+
+class TestCreateRule:
+    async def test_requires_a_condition(self):
+        client = MagicMock()
+        with pytest.raises(ValueError, match="condition"):
+            await create_rule(client, "x", config=_CFG, move_to_folder="archive")
+
+    async def test_requires_an_action(self):
+        client = MagicMock()
+        with pytest.raises(ValueError, match="action"):
+            await create_rule(client, "x", config=_CFG, from_addresses=["a@b.com"])
+
+    async def test_empty_name_refused(self):
+        client = MagicMock()
+        with pytest.raises(ValueError, match="name"):
+            await create_rule(
+                client, "   ", config=_CFG, from_addresses=["a@b.com"], mark_as_read=True
+            )
+
+    async def test_invalid_importance_refused(self):
+        client = MagicMock()
+        with pytest.raises(ValueError, match="importance"):
+            await create_rule(
+                client,
+                "x",
+                config=_CFG,
+                from_addresses=["a@b.com"],
+                importance="urgent",
+                mark_as_read=True,
+            )
+
+    async def test_read_only_refused(self):
+        client = MagicMock()
+        with pytest.raises(ReadOnlyError):
+            await create_rule(
+                client, "x", config=_CFG_RO, from_addresses=["a@b.com"], mark_as_read=True
+            )
+
+    async def test_disallowed_category_refused(self):
+        client = MagicMock()
+        with pytest.raises(PermissionDeniedError):
+            await create_rule(
+                client,
+                "x",
+                config=_CFG_ALLOW_OTHER,
+                from_addresses=["a@b.com"],
+                mark_as_read=True,
+            )
+
+    async def test_allowed_category_passes(self):
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        created = _make_rule(rule_id="new", sequence=100)
+        collection.post = AsyncMock(return_value=created)
+
+        result = await create_rule(
+            client,
+            "Rule",
+            config=_CFG_ALLOW_RULES,
+            from_addresses=["a@b.com"],
+            move_to_folder="archive",
+        )
+
+        assert result["status"] == "created"
+        assert result["id"] == "new"
+
+    async def test_sequence_appends_after_highest(self):
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [7, 120])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new", sequence=121))
+
+        await create_rule(
+            client, "Rule", config=_CFG, from_addresses=["a@b.com"], mark_as_read=True
+        )
+
+        assert collection.post.await_args.args[0].sequence == 121
+
+    async def test_sequence_never_below_100(self):
+        """Graph treats low sequences as top-priority; a new rule never jumps the queue."""
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [7, 42])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new", sequence=100))
+
+        await create_rule(
+            client, "Rule", config=_CFG, from_addresses=["a@b.com"], mark_as_read=True
+        )
+
+        assert collection.post.await_args.args[0].sequence == 100
+
+    async def test_explicit_sequence_kept(self):
+        client = MagicMock()
+        collection = _wire_rules(client)
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new", sequence=5))
+
+        result = await create_rule(
+            client,
+            "Rule",
+            config=_CFG,
+            from_addresses=["a@b.com"],
+            mark_as_read=True,
+            sequence=5,
+        )
+
+        assert collection.post.await_args.args[0].sequence == 5
+        assert result["sequence"] == 5
+
+    async def test_payload_reaches_the_wire(self):
+        """The conditions and actions this call was given must all serialize."""
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new"))
+
+        await create_rule(
+            client,
+            "wire-rule-9f3",
+            config=_CFG,
+            from_addresses=["wire-sender-9f3@example.com"],
+            subject_contains=["wire-subject-9f3"],
+            move_to_folder="archive",
+            mark_as_read=True,
+            stop_processing_rules=True,
+        )
+
+        assert_on_wire(
+            collection.post.await_args.args[0],
+            "wire-rule-9f3",
+            "wire-sender-9f3@example.com",
+            "wire-subject-9f3",
+            "markAsRead",
+            "stopProcessingRules",
+        )
+
+
+class TestUpdateRule:
+    async def test_repoint_preserves_other_actions(self):
+        """Graph replaces `actions` wholesale — the read-modify-write must not drop any."""
+        client = MagicMock()
+        current = _make_rule(
+            actions=_make_actions(
+                move_to_folder=_OLD_FOLDER_ID,
+                mark_as_read=True,
+                stop_processing_rules=True,
+            )
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        await update_rule(client, "rule-1", config=_CFG, move_to_folder=_NEW_FOLDER_ID)
+
+        patched_payload = builder.patch.await_args.args[0]
+        assert patched_payload.actions.move_to_folder == _NEW_FOLDER_ID
+        assert patched_payload.actions.mark_as_read is True
+        assert patched_payload.actions.stop_processing_rules is True
+
+    async def test_repoint_payload_reaches_the_wire(self):
+        client = MagicMock()
+        current = _make_rule(actions=_make_actions(mark_as_read=True, delete=False))
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        await update_rule(client, "rule-1", config=_CFG, move_to_folder=_NEW_FOLDER_ID)
+
+        assert_on_wire(
+            builder.patch.await_args.args[0],
+            _NEW_FOLDER_ID,
+            "markAsRead",
+        )
+
+    async def test_mark_as_read_only_preserves_move(self):
+        client = MagicMock()
+        current = _make_rule(actions=_make_actions(move_to_folder=_OLD_FOLDER_ID))
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        await update_rule(client, "rule-1", config=_CFG, mark_as_read=True)
+
+        actions = builder.patch.await_args.args[0].actions
+        assert actions.move_to_folder == _OLD_FOLDER_ID
+        assert actions.mark_as_read is True
+
+    async def test_rename_does_not_read_or_patch_actions(self):
+        client = MagicMock()
+        builder = _wire_single_rule(client, current=_make_rule(), patched=_make_rule())
+
+        await update_rule(client, "rule-1", config=_CFG, name="Renamed")
+
+        payload = builder.patch.await_args.args[0]
+        assert payload.display_name == "Renamed"
+        assert payload.actions is None
+        builder.get.assert_not_awaited()
+
+    async def test_disable(self):
+        client = MagicMock()
+        builder = _wire_single_rule(
+            client, current=_make_rule(), patched=_make_rule(is_enabled=False)
+        )
+
+        result = await update_rule(client, "rule-1", config=_CFG, is_enabled=False)
+
+        assert builder.patch.await_args.args[0].is_enabled is False
+        assert result["status"] == "updated"
+
+    async def test_bad_sequence_refused(self):
+        client = MagicMock()
+        _wire_single_rule(client, current=_make_rule(), patched=_make_rule())
+        with pytest.raises(ValueError, match="sequence"):
+            await update_rule(client, "rule-1", config=_CFG, sequence=0)
+
+    async def test_read_only_refused(self):
+        client = MagicMock()
+        with pytest.raises(ReadOnlyError):
+            await update_rule(client, "rule-1", config=_CFG_RO, name="x")
+
+    async def test_disallowed_category_refused(self):
+        client = MagicMock()
+        with pytest.raises(PermissionDeniedError):
+            await update_rule(client, "rule-1", config=_CFG_ALLOW_OTHER, name="x")
+
+
+class TestDeleteRule:
+    async def test_deletes_by_id(self):
+        client = MagicMock()
+        builder = _wire_single_rule(client)
+
+        result = await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
+
+        builder.delete.assert_awaited_once()
+        assert result == {"status": "deleted", "id": "rule-1"}
+
+    async def test_read_only_refused(self):
+        client = MagicMock()
+        with pytest.raises(ReadOnlyError):
+            await delete_rule(client, "rule-1", config=_CFG_RO)
+
+    async def test_disallowed_category_refused(self):
+        client = MagicMock()
+        with pytest.raises(PermissionDeniedError):
+            await delete_rule(client, "rule-1", config=_CFG_ALLOW_OTHER)
+
+    async def test_malformed_id_refused(self):
+        client = MagicMock()
+        with pytest.raises(ValueError):
+            await delete_rule(client, "not an id!!", config=_CFG)

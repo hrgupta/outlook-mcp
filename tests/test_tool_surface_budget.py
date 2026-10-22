@@ -54,7 +54,14 @@ CHARS_PER_TOKEN = 4
 # above was taken on an interpreter that keeps docstring indentation (3.10-3.12);
 # the same 1.25.1 surface measured 13,243 there and 13,024 on 3.13, which strips
 # it. Compare numbers from here on only with each other. Ceiling unchanged.
-TOOL_SURFACE_CEILING = 13_300
+#
+# 14,103 on the 72-tool surface: the four inbox-rule tools (+4 schemas), of
+# which `outlook_create_rule` is most of the cost — 15 optional arguments, the
+# price of exposing Graph's whole predicate/action set in one call. Its
+# docstring was cut to the argument list alone before this number was taken;
+# what remains is the schema. Ceiling raised to 14,400: ~2% headroom, room for a
+# wording fix, not for another batch.
+TOOL_SURFACE_CEILING = 14_400
 
 # `prompts/list` is the cheap half of the bargain struck in 1.20.0: workflow
 # guidance costs a name and one line here until someone invokes it. If that ever
