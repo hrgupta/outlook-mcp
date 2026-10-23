@@ -24,7 +24,7 @@ You'll like this if you're:
 - Looking for **real coverage** — mail, calendar, contacts, to-do, drafts, folders, batch ops, threading — instead of a mail-only or calendar-only wrapper
 - Security-conscious: tokens in the OS keyring (Keychain on macOS, libsecret on Linux -- never cleartext unless you opt in), granular `allow_categories`, optional `read_only` mode, zero telemetry
 
-This **isn't for you** if you need work/school M365 accounts (use Microsoft's official tooling — Entra ID auth and admin-consent flows are out of scope here), or if a basic mail-only client would suffice (this has 68 tools — way more than you need for "read my inbox").
+This **isn't for you** if you need work/school M365 accounts (use Microsoft's official tooling — Entra ID auth and admin-consent flows are out of scope here), or if a basic mail-only client would suffice (this has 72 tools — way more than you need for "read my inbox").
 
 ### How it differs from other Outlook tools you'll find
 
@@ -44,7 +44,7 @@ Give your AI agent full Outlook access. Example prompts that just work:
 - *"Draft a reply to the last message from my sister saying I'll call her this weekend."*
 - *"Move all newsletter and promotional email from this week to a 'Read Later' folder — batch 20 at a time."*
 
-The server exposes 68 discrete tools so the agent can compose its own workflow — read, triage, write, schedule, track tasks — without hardcoded macros.
+The server exposes 72 discrete tools so the agent can compose its own workflow — read, triage, write, schedule, track tasks — without hardcoded macros.
 
 ## Works With
 
@@ -59,12 +59,13 @@ Listed on the [official MCP Registry](https://registry.modelcontextprotocol.io/v
 
 ## Features
 
-**68 tools** across 13 categories:
+**72 tools** across 14 categories:
 
 - **Auth (1)** -- auth status check (login is via CLI)
 - **Mail Read (7)** -- list inbox (with Focused Inbox and uncategorized filters), read message, bulk read by ID via `$batch`, search (KQL), list folders, delta-sync inbox changes, composed "since last call" digest across mail/events/contacts
 - **Mail Write (3)** -- send, reply/reply-all, forward
 - **Mail Triage (9)** -- move, delete (soft by default), flag, categorize, mark read/unread, reclassify (Focused Inbox), list/set/delete per-sender Focused Inbox overrides
+- **Mail Rules (4)** -- list rules in execution order, create from sender/subject/body conditions, update (reads the rule first, so other actions survive a re-point), delete
 - **Calendar Read (3)** -- list events (with recurring expansion), get event details, delta-sync event changes
 - **Calendar Write (4)** -- create, update, delete, RSVP (accept/decline/tentative)
 - **Contacts (7)** -- list, search, get, create, update, delete, delta-sync changes
@@ -91,11 +92,11 @@ Listed on the [official MCP Registry](https://registry.modelcontextprotocol.io/v
 
 ### Agent-friendly shape (1.8.0)
 
-Two pure-code upgrades that make the tools cheaper and more recoverable for AI agents:
+Two pure-code upgrades that make the same 57 tools cheaper and more recoverable for AI agents:
 
-- **Concise mode** — pass `concise=True` to the six high-volume read tools (`outlook_list_inbox`, `outlook_read_message`, `outlook_read_messages`, `outlook_search_mail`, `outlook_list_events`, `outlook_list_thread`) to drop bulky fields: full message bodies, quoted prior-message text in threads, body previews and categories on inbox listings — typical payload reduction ~10×. On `outlook_list_events` the trade is different and smaller: the attendee list becomes a count, and `organizer`, `response_status`, `type` and `show_as` come off, so a concise scan cannot tell a recurring occurrence from a one-off. Default `concise=False` preserves the existing response shape — strict backward compat.
+- **Concise mode** — pass `concise=True` to the five high-volume read tools (`outlook_list_inbox`, `outlook_read_message`, `outlook_search_mail`, `outlook_list_events`, `outlook_list_thread`) to drop bulky fields: full message bodies, quoted prior-message text in threads, body previews and categories on inbox listings — typical payload reduction ~10×. On `outlook_list_events` the trade is different and smaller: the attendee list becomes a count, and `organizer`, `response_status`, `type` and `show_as` come off, so a concise scan cannot tell a recurring occurrence from a one-off. Default `concise=False` preserves the existing response shape — strict backward compat.
 
-- **Structured Graph errors** — every tool turns msgraph SDK exceptions into a tool error whose text carries Graph's message and a recovery hint: re-auth on 401, a link to the repo's [ROADMAP dead-ends list](https://github.com/mpalermiti/outlook-mcp/blob/main/ROADMAP.md#investigated-and-not-viable) on 403/`ErrorAccessDenied`, re-list on 404/`ErrorItemNotFound`, back-off on 429, retry on 503. `OutlookMCPError` subclasses and validation errors pass through unchanged.
+- **Structured Graph errors** — every tool wraps msgraph SDK exceptions into `{code, message, action}` responses with operator-friendly recovery hints: re-auth on 401, a link to the repo's [ROADMAP dead-ends list](https://github.com/mpalermiti/outlook-mcp/blob/main/ROADMAP.md#investigated-and-not-viable) on 403/`ErrorAccessDenied`, re-list on 404/`ErrorItemNotFound`, back-off on 429, retry on 503. `OutlookMCPError` subclasses and validation errors pass through unchanged.
 
 ---
 
@@ -238,7 +239,7 @@ uv run outlook-mcp serve    # Start MCP server (default, used by OpenClaw/Claude
 
 ### `me-token-to-replace is invalid` on every call
 
-You're on 1.22.0 installed after 2026-09-18. A fresh install of that version resolves `microsoft-kiota-*` 1.13 or later, which `msgraph-core` 1.5.1 doesn't handle, so every `/me` request reaches Graph as `/users/me-token-to-replace`. Fixed in 1.22.1, which caps kiota below 1.13 ([#80](https://github.com/mpalermiti/outlook-mcp/issues/80)). In 1.26.0 that cap is replaced by a `msgraph-core>=1.5.2` floor, which carries the fix and works with kiota 1.13+:
+You're on 1.22.0 installed after 2026-09-18. A fresh install of that version resolves `microsoft-kiota-*` 1.13 or later, which `msgraph-core` doesn't yet handle, so every `/me` request reaches Graph as `/users/me-token-to-replace`. Fixed in 1.22.1, which caps kiota below 1.13 ([#80](https://github.com/mpalermiti/outlook-mcp/issues/80)):
 
 ```bash
 uv tool upgrade outlook-graph-mcp
@@ -289,9 +290,9 @@ configured `timezone`; responses are always UTC.
 | Tool | Description |
 |------|-------------|
 | `outlook_list_inbox` | List messages in a folder. `folder` accepts display names, well-known names, or Graph IDs. Filter by read status, sender, date range, Focused Inbox classification. Pagination via `skip`. |
-| `outlook_read_message` | Get full message by ID, or by its Message-ID header value (`<abc@example.com>`, matched exactly; the response's `id` is the Graph ID the other tools take). Format: `text`, `html`, or `full` (both). Pass `include_deferred_send=True` to also surface the draft's scheduled delivery time. |
+| `outlook_read_message` | Get full message by ID. Format: `text`, `html`, or `full` (both). Pass `include_deferred_send=True` to also surface the draft's scheduled delivery time. |
 | `outlook_read_messages` | Bulk read up to 20 messages by ID via Graph `$batch` in one round-trip. Per-message shape matches `outlook_read_message` byte-for-byte for the same `(format, concise, include_deferred_send)`. Partial-failure tolerant: 404s on some IDs surface in `failures[]` without failing the whole call. Use NOT N `outlook_read_message` calls. |
-| `outlook_search_mail` | Search mail using KQL query. Optionally scope to a folder by name or ID. A `cursor` continues the search in the folder it started in. |
+| `outlook_search_mail` | Search mail using KQL query. Optionally scope to a folder by name or ID. |
 | `outlook_list_folders` | List mail folders with counts, `parent_id`, and `child_count`. Pass `recursive=true` to walk the full folder tree (subfolders included). |
 | `outlook_list_inbox_delta` | List only inbox changes since the last call. First call returns a full snapshot plus a `delta_token`; subsequent calls (token passed back) return only added/updated/deleted items. Deletes come back as `{id, is_deleted: True}`. Cursor is stateless — agent persists and replays. |
 | `outlook_changes_since` | One structured "since last call" digest composing mail/events/contacts deltas. Returns counts + `urgent_flagged` mail + top-5 `by_sender` + new/cancelled events. Each resource has an independent `delta_token`; stale-token recovery (HTTP 410) auto-resyncs that resource and surfaces `_meta.resync`. First-call snapshot is filtered to `fallback_window_hours` (default 24). Designed for recurring agent loops. |
@@ -348,7 +349,7 @@ registration and re-consent before using the write tools.
 
 | Tool | Description |
 |------|-------------|
-| `outlook_create_event` | Create event with location and attendees. (`is_online` has no effect on personal accounts — Graph ignores `isOnlineMeeting` for consumer mailboxes.) Pass `recurrence` to create a **series**: a shorthand (`daily`, `weekdays`, `weekly`, `monthly`, `yearly`, anchored on `start`) or a full [Graph recurrence object](https://learn.microsoft.com/graph/api/resources/patternedrecurrence) for anything else. `range.startDate` defaults to the event's start date. `show_as` sets the free/busy status Outlook labels "Show as" — `free`, `tentative`, `busy`, `oof` (out of office), `workingElsewhere`, or `unknown`; omit it and Graph applies its own default of `busy`. `calendar` creates it in another calendar, resolved as `outlook_list_events` resolves it: omit (or `"primary"`) for the default, otherwise a display name or an ID from `outlook_list_calendars`. A calendar Graph lists as read-only (`canEdit: false`) is refused before anything is sent. The tools that take an event ID need no `calendar`: an ID reaches an event on any of your own calendars. |
+| `outlook_create_event` | Create event with location and attendees. (`is_online` has no effect on personal accounts — Graph ignores `isOnlineMeeting` for consumer mailboxes.) Pass `recurrence` to create a **series**: a shorthand (`daily`, `weekdays`, `weekly`, `monthly`, `yearly`, anchored on `start`) or a full [Graph recurrence object](https://learn.microsoft.com/graph/api/resources/patternedrecurrence) for anything else. `range.startDate` defaults to the event's start date. `show_as` sets the free/busy status Outlook labels "Show as" — `free`, `tentative`, `busy`, `oof` (out of office), `workingElsewhere`, or `unknown`; omit it and Graph applies its own default of `busy`. |
 | `outlook_update_event` | Update event fields (subject, time, location, body, attendees, all-day, `show_as`). Only patches changed fields. Pass `recurrence` to turn a single event into a series, or `remove_recurrence=True` to turn a series back into a single event. `attendees` **replaces** the whole guest list and emails invitations/cancellations; `is_all_day` needs `start`+`end` in the same call, while `show_as` patches on its own. Patching a time keeps the zone the event is anchored in; `timezone` (with `start`+`end`) re-anchors it elsewhere, which is how a series created before zones existed gets repaired. A `start`, `end` or `recurrence` patch to a series with edited or deleted occurrences is refused, naming them — Graph would silently discard every one. |
 | `outlook_delete_event` | Delete a calendar event. |
 | `outlook_rsvp` | RSVP to an event: `accept`, `decline`, or `tentative`. Optionally include a message. |
@@ -359,9 +360,9 @@ registration and re-consent before using the write tools.
 |------|-------------|
 | `outlook_list_contacts` | List contacts with cursor pagination. Summaries carry `categories`; `outlook_search_contacts` omits the key because Graph's `$search` does not return it. |
 | `outlook_search_contacts` | Search contacts by name or email. |
-| `outlook_get_contact` | Get full contact details by ID, including `middle_name`, `job_title`, `birthday`, home/business/other addresses, categories and personal notes. |
-| `outlook_create_contact` | Create a new contact. `title` is the name prefix ("Dr.", "Ms."), which Outlook shows in the display name; the job goes in `job_title`. `phone_type` (`mobile`, the default, `business` or `home`) says which kind of number `phone` is. `birthday` is a date (`YYYY-MM-DD`), stored at 11:59 UTC so that it is the same date in every time zone from UTC−11 to UTC+12; `outlook_get_contact` returns that timestamp. `middle_name`, `personal_notes` and `categories` are set as given. |
-| `outlook_update_contact` | Update contact fields, including `middle_name`, `company`, `title`, `job_title` and `personal_notes`. `categories` **replaces** the contact's whole list, as `outlook_categorize_message` does a message's, so `[]` removes every category; read the contact first to add one. `phone_type` works as on create; a `business` or `home` number **replaces** that list of numbers with the one given. `clear_phones` empties the types it names, so `phone_type="business", clear_phones=["mobile"]` moves a number saved as mobile to business in one update. `home_address`, `business_address` and `other_address` take the shape `outlook_get_contact` returns — any subset of `street`, `city`, `state`, `postal_code`, `country_or_region` — and **replace** that whole address, so pass back every part you want to keep. Omit one to leave it untouched. `birthday` sets or replaces the date, as on create. |
+| `outlook_get_contact` | Get full contact details by ID, including home/business/other addresses, categories and personal notes. |
+| `outlook_create_contact` | Create a new contact. |
+| `outlook_update_contact` | Update contact fields. `home_address`, `business_address` and `other_address` take the shape `outlook_get_contact` returns — any subset of `street`, `city`, `state`, `postal_code`, `country_or_region` — and **replace** that whole address, so pass back every part you want to keep. Omit one to leave it untouched. |
 | `outlook_delete_contact` | Delete a contact. |
 | `outlook_list_contacts_delta` | List only contact changes since the last call. Deletes come back as `{id, is_deleted: True}`. Cursor is stateless. |
 
@@ -430,7 +431,7 @@ registration and re-consent before using the write tools.
 |------|-------------|
 | `outlook_list_thread` | Get all messages in a conversation thread. |
 | `outlook_copy_message` | Copy a message to another folder. |
-| `outlook_batch_triage` | Batch move/flag/categorize/mark_read (max 20 per call). Single Graph `/$batch` round-trip — 10-20× faster than per-message calls for large triage; a message Graph throttles is re-sent after its `Retry-After` rather than reported as failed. `mark_read` takes `true`/`false` (or `read`/`unread`). |
+| `outlook_batch_triage` | Batch move/flag/categorize/mark_read (max 20 per call). Single Graph `/$batch` round-trip — 10-20× faster than per-message calls for large triage. |
 
 ### User and Admin
 
@@ -477,10 +478,10 @@ Config lives at `~/.outlook-mcp/config.json` (created with `0600` permissions on
 
 ### Toolset selection (optional) — `OUTLOOK_MCP_TOOLSETS`
 
-All 68 tool schemas load into the client's context every turn (the chars/4 proxy `test_tool_surface_budget.py` measures with; a different yardstick than the ~8.6k o200k figure in ROADMAP for the 62-tool surface). A client that only needs part of the surface can set the `OUTLOOK_MCP_TOOLSETS` environment variable to a comma-separated list of tool groups, and only those load. The `account` group (auth / identity) is always available.
+All 72 tool schemas load into the client's context every turn (the chars/4 proxy `test_tool_surface_budget.py` measures with; a different yardstick than the ~8.6k o200k figure in ROADMAP for the 62-tool surface). A client that only needs part of the surface can set the `OUTLOOK_MCP_TOOLSETS` environment variable to a comma-separated list of tool groups, and only those load. The `account` group (auth / identity) is always available.
 
 ```bash
-# e.g. a recurring mail + calendar agent: 28 tools instead of 68 (about half the tool tokens per turn)
+# e.g. a recurring mail + calendar agent: ~30 tools instead of 72 (~58% fewer tool tokens/turn)
 OUTLOOK_MCP_TOOLSETS="mail,calendar,digest,delta"
 ```
 
@@ -561,9 +562,10 @@ By default, `read_only: false` unlocks **all** write tools. For finer control, s
 
 | Category | Tools | Risk |
 |---|---|---|
-| `mail_drafts` | create/update/delete draft, attach to/remove from a draft | Safe — drafts only, no send |
-| `mail_triage` | move, delete (soft), flag, categorize, mark read, copy, batch, reclassify and set/delete Focused Inbox overrides | Moderate — reversible except hard delete |
+| `mail_drafts` | create/update/delete draft | Safe — drafts only, no send |
+| `mail_triage` | move, delete (soft), flag, categorize, mark read, copy, batch | Moderate — reversible except hard delete |
 | `mail_folders` | create/rename/delete folder | Moderate |
+| `mail_rules` | create/update/delete inbox rule | **Dangerous** — rules run server-side, so one keeps moving, forwarding or deleting mail with every client closed |
 | `mail_send` | send, reply, forward, send_draft, send_with_attachments | **Dangerous** — sends email on your behalf |
 | `calendar_write` | create/update/delete event, RSVP | Moderate — your own calendar. The parts that email other people text the agent wrote need `mail_send` as well: inviting attendees, rewording (subject, body, location) any event that already has them, and adding a message to an RSVP. A bare RSVP, a time change and a cancellation still notify the people involved, but carry nothing the agent wrote |
 | `contacts_write` | create/update/delete contact | Moderate |
@@ -647,8 +649,6 @@ uv run outlook-mcp
 - **Advanced mail** -- raw MIME export, internet message headers
 - **Calendar** -- cancel event (with attendee notification)
 - **Enterprise (Entra ID)** -- work/school account support
-
-Committed direction, and what was investigated and ruled out (inbox rules, mailbox settings), is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
