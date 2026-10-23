@@ -50,6 +50,11 @@ TOOL_GROUPS: dict[str, str] = {
     "outlook_copy_message": "mail",
     "outlook_batch_triage": "mail",
     "outlook_list_thread": "mail",
+    # rules
+    "outlook_list_rules": "mail",
+    "outlook_create_rule": "mail",
+    "outlook_update_rule": "mail",
+    "outlook_delete_rule": "mail",
     # drafts
     "outlook_list_drafts": "drafts",
     "outlook_create_draft": "drafts",
@@ -122,6 +127,7 @@ READ_ONLY: set[str] = {
     "outlook_read_messages",
     "outlook_search_mail",
     "outlook_list_thread",
+    "outlook_list_rules",
     "outlook_list_drafts",
     "outlook_list_attachments",
     "outlook_list_events",
@@ -168,6 +174,7 @@ DESTRUCTIVE: set[str] = {
     "outlook_delete_task_attachment",
     "outlook_delete_folder",
     "outlook_delete_inbox_override",
+    "outlook_delete_rule",
     "outlook_remove_draft_attachment",
 }
 
