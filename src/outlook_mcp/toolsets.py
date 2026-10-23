@@ -174,6 +174,9 @@ DESTRUCTIVE: set[str] = {
     "outlook_delete_task_attachment",
     "outlook_delete_folder",
     "outlook_delete_inbox_override",
+    # Creating a rule outlives the call: it can keep deleting or forwarding mail
+    # indefinitely, so a client that asks before destructive calls must ask here.
+    "outlook_create_rule",
     "outlook_delete_rule",
     "outlook_remove_draft_attachment",
 }

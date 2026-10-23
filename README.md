@@ -321,7 +321,7 @@ configured `timezone`; responses are always UTC.
 
 ### Inbox Rules
 
-Server-side rules: they run whether or not any Outlook client is open.
+Server-side rules: they run whether or not any Outlook client is open. A rule is **durable, not a one-off** — create one and it keeps applying to all future mail long after the agent that made it has disconnected. That is what makes rules useful, and it is also why `outlook_create_rule` is annotated destructive and why `forward_to` additionally requires the `mail_send` category: a forwarding rule keeps mailing a third party after the session ends, which is the standard way a compromised mailbox gets drained. Hard delete is not offered here — `delete` moves matching mail to Deleted Items, which is recoverable.
 
 | Tool | Description |
 |------|-------------|
@@ -332,10 +332,10 @@ Server-side rules: they run whether or not any Outlook client is open.
 
 The three write tools are gated by the `mail_rules` permission category — add it to
 `allow_categories` (or leave `allow_categories` unset for a full read-write install).
-Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on the
-token; the default read-write consent set requests `MailboxSettings.Read` only, so a
-stock install can list rules but not change them. Add the write scope to your app
-registration and re-consent before using the write tools.
+Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on the token. The default read-write consent set requests `MailboxSettings.Read` only, so a stock install can list rules but not change them. To enable the write tools:
+
+1. **Azure portal** → App registrations → your app → API permissions → Add a permission → Microsoft Graph → *Delegated* permissions → `MailboxSettings.ReadWrite` → Add. Grant admin consent if your tenant requires it.
+2. **Re-consent locally** with `outlook-mcp auth`. An existing token keeps the scopes it was issued with, so skipping this leaves every write failing with `ErrorAccessDenied` while reads keep working; `outlook_auth_status` and `outlook-mcp status` report a stale consent rather than leaving you to guess.
 
 ### Calendar Read
 

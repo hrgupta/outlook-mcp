@@ -1,6 +1,6 @@
 """The tool surface is a per-turn cost, so it gets a ceiling.
 
-Every client pays for all 68 tool schemas on every turn that includes them.
+Every client pays for all 72 tool schemas on every turn that includes them.
 ROADMAP records a measured baseline of ~8,644 tokens (o200k proxy, 2026-07), and
 that number is what makes the `OUTLOOK_MCP_TOOLSETS` gating worth having — but
 nothing stopped it drifting upward one well-meant docstring at a time.
@@ -30,7 +30,6 @@ from outlook_mcp.server import mcp
 CHARS_PER_TOKEN = 4
 
 # Ceiling for the full tool surface. Measured at 11,206 on 1.20.0 with a
-#
 # 12,000 ceiling; raised to 13,500 for the eight To Do detail tools
 # (get_task, checklist-item CRUD, task attachments), then to 13,650 after
 # the attachment rewrite (measured 12,855 at the time) — each a deliberate
@@ -56,43 +55,15 @@ CHARS_PER_TOKEN = 4
 # the same 1.25.1 surface measured 13,243 there and 13,024 on 3.13, which strips
 # it. Compare numbers from here on only with each other. Ceiling unchanged.
 #
-# 13,203 with the contact fixes, on the dedented measure: `job_title` on create
-# and update (#119), then `phone_type` on both and `title` on update (#120,
-# +101), then update's docstring saying `title` is the name prefix, as create's
-# does (+23) — undescribed, models fill it with the job (#119). No raise.
-#
-# 13,261 with `clear_phones` on `outlook_update_contact` and its one-line example
-# (+58): without it, moving a number from mobile to business left a copy in
-# mobile (#120 follow-up). No raise; ~39 tokens of headroom left.
-#
-# 13,298 with `calendar` on `outlook_create_event` (#141, +37): the argument and
-# one short line; that it takes a display name is in INSTRUCTIONS already, which
-# every session gets once. No raise; 2 tokens of headroom left.
-#
-# 13,308 once #146 (`outlook_read_message` takes a Message-ID, +10) and #147
-# (`calendar` on create, +37) landed together on 2026-10-23: each fit on its own,
-# the pair did not. Raised to 13,500 at merge time — a deliberate step for the
-# contributor batch reviewed that day, several of which carry their own raise to
-# the same number. The ~1% convention resumes from whatever the batch measures.
-#
-# 13,326 with `birthday` on `outlook_create_contact` (+31) and
-# `outlook_update_contact` (+34): the argument on each, and the words saying it is a
-# date, YYYY-MM-DD. `outlook_get_contact` already returned it; nothing could write
-# it. Two arguments do not fit the ~39 tokens left, so this is a deliberate raise to
-# 13,500: ~1% headroom, as before.
-#
-# 13,397 with `company` on `outlook_update_contact` (+25 on today's main, 13,372):
-# create set it and update could not, so a contact who changed employer kept the
-# old one (#173). The argument alone, no new words. No raise.
-#
-# 13,586 with `middle_name`, `personal_notes` and `categories` on
-# `outlook_create_contact` and `outlook_update_contact` (+189, on 13,397 with #174)
-# and update's sentence that `categories` replaces the whole list ([] clears it):
-# without it, adding one category with a one-item list drops the rest, silently.
-# `outlook_get_contact` returned categories and notes that nothing could write
-# (#175). Six arguments do not fit the ~100 tokens left, so this is a deliberate
-# raise to 13,700: ~0.8% headroom.
-TOOL_SURFACE_CEILING = 13_700
+# 14,127 on the 72-tool surface (re-measured after review): the four inbox-rule
+# tools (+4 schemas), of which `outlook_create_rule` is most of the cost — 14
+# optional arguments, the price of exposing Graph's whole predicate/action set in
+# one call. Review asked for one sentence in that docstring saying a rule outlives
+# the session (+24), which is worth paying: it is the write most likely to be
+# induced by the mail it acts on. `permanent_delete` came off the signature (-8).
+# Ceiling stays 14,400: ~1.9% headroom, room for a wording fix, not for another
+# batch.
+TOOL_SURFACE_CEILING = 14_400
 
 # `prompts/list` is the cheap half of the bargain struck in 1.20.0: workflow
 # guidance costs a name and one line here until someone invokes it. If that ever
@@ -113,7 +84,7 @@ async def test_the_tool_surface_stays_within_budget():
     cost = _proxy_tokens([t.model_dump(exclude_none=True, by_alias=True) for t in tools])
 
     assert cost <= TOOL_SURFACE_CEILING, (
-        f"The 68-tool surface now costs ~{cost} proxy tokens per turn, over the "
+        f"The 72-tool surface now costs ~{cost} proxy tokens per turn, over the "
         f"{TOOL_SURFACE_CEILING} ceiling. Every client pays this on every turn. "
         f"Either trim it, or raise the ceiling deliberately and say why."
     )

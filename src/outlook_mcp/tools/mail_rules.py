@@ -15,8 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from outlook_mcp.config import Config
+from outlook_mcp.errors import ToolInputError
 from outlook_mcp.folder_resolver import resolve_folder_id
-from outlook_mcp.permissions import CATEGORY_MAIL_RULES, check_permission
+from outlook_mcp.permissions import CATEGORY_MAIL_RULES, check_permission, check_sends_mail
 from outlook_mcp.validation import sanitize_output, validate_email, validate_graph_id
 
 
@@ -113,7 +114,6 @@ async def create_rule(
     copy_to_folder: str | None = None,
     mark_as_read: bool | None = None,
     delete: bool | None = None,
-    permanent_delete: bool | None = None,
     forward_to: list[str] | None = None,
     assign_categories: list[str] | None = None,
     stop_processing_rules: bool | None = None,
@@ -127,10 +127,21 @@ async def create_rule(
     ``importance`` is "low", "normal", or "high". ``sequence`` controls
     execution order (lower runs first); omitted, the rule is appended after
     the highest existing sequence.
+
+    A rule is durable, not a one-off: it keeps running after this session ends
+    and applies to every message that arrives later. ``forward_to`` is also an
+    email to somebody else, so it additionally requires the ``mail_send``
+    category. Hard delete is deliberately not offered here — ``delete`` moves
+    matching mail to Deleted Items, which is recoverable.
     """
     check_permission(config, CATEGORY_MAIL_RULES, "outlook_create_rule")
+    if forward_to:
+        # A forwarding rule emails a third party long after this session ended,
+        # which is precisely what `mail_send` gates. Same ordering as the
+        # calendar tools: the tool's own category first, then the send gate.
+        check_sends_mail(config, "outlook_create_rule", "forward matching mail to another address")
     if not name or not name.strip():
-        raise ValueError("Rule name is required.")
+        raise ToolInputError("Rule name is required.")
 
     from msgraph.generated.models.importance import Importance
     from msgraph.generated.models.message_rule import MessageRule
@@ -158,7 +169,7 @@ async def create_rule(
     if importance:
         valid = {"low", "normal", "high"}
         if importance not in valid:
-            raise ValueError(f"importance must be one of {valid}; got {importance}")
+            raise ToolInputError(f"importance must be one of {sorted(valid)}; got {importance}")
         conditions.importance = Importance(importance)
         has_condition = True
 
@@ -177,9 +188,6 @@ async def create_rule(
     if delete is not None:
         actions.delete = delete
         has_action = True
-    if permanent_delete is not None:
-        actions.permanent_delete = permanent_delete
-        has_action = True
     if forward_to:
         actions.forward_to = _recipients([validate_email(a) for a in forward_to])
         has_action = True
@@ -191,15 +199,15 @@ async def create_rule(
         has_action = True
 
     if not has_condition:
-        raise ValueError(
+        raise ToolInputError(
             "At least one condition is required: from_addresses, subject_contains, "
             "body_contains, sender_contains, has_attachments, or importance."
         )
     if not has_action:
-        raise ValueError(
+        raise ToolInputError(
             "At least one action is required: move_to_folder, copy_to_folder, "
-            "mark_as_read, delete, permanent_delete, forward_to, assign_categories, "
-            "or stop_processing_rules."
+            "mark_as_read, delete, forward_to, assign_categories, or "
+            "stop_processing_rules."
         )
 
     # ── Assemble ───────────────────────────────────────────────
@@ -211,7 +219,7 @@ async def create_rule(
 
     if sequence is not None:
         if sequence < 1:
-            raise ValueError("sequence must be a positive integer")
+            raise ToolInputError("sequence must be a positive integer")
         rule.sequence = sequence
     else:
         # Append after the highest existing sequence (default 100 if none).
@@ -263,7 +271,7 @@ async def update_rule(
         patch.is_enabled = is_enabled
     if sequence is not None:
         if sequence < 1:
-            raise ValueError("sequence must be a positive integer")
+            raise ToolInputError("sequence must be a positive integer")
         patch.sequence = sequence
     if move_to_folder is not None or mark_as_read is not None:
         current = await builder.get()

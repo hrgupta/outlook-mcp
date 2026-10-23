@@ -356,3 +356,92 @@ class TestDeleteRule:
         client = MagicMock()
         with pytest.raises(ValueError):
             await delete_rule(client, "not an id!!", config=_CFG)
+
+
+class TestForwardingRuleNeedsMailSend:
+    """A forwarding rule emails a third party indefinitely, so mail_send gates it.
+
+    Every other write this server makes happens while an agent is connected and a
+    person is nearby. A forwarding rule keeps delivering mail after everyone has
+    disconnected — the usual way a compromised mailbox is drained — so it gets the
+    same gate the calendar tools use for the part of a call that emails someone.
+    """
+
+    async def test_forward_refused_without_mail_send(self):
+        client = MagicMock()
+        with pytest.raises(PermissionDeniedError):
+            await create_rule(
+                client,
+                "Forward to outside",
+                config=_CFG_ALLOW_RULES,
+                from_addresses=["a@b.com"],
+                forward_to=["elsewhere@example.com"],
+            )
+
+    async def test_move_only_rule_still_allowed_without_mail_send(self):
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new"))
+
+        result = await create_rule(
+            client,
+            "Move newsletters",
+            config=_CFG_ALLOW_RULES,
+            from_addresses=["a@b.com"],
+            move_to_folder="archive",
+        )
+
+        assert result["status"] == "created"
+
+    async def test_forward_allowed_when_mail_send_granted(self):
+        config = Config(client_id="test", allow_categories=["mail_rules", "mail_send"])
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new"))
+
+        result = await create_rule(
+            client,
+            "Forward to self",
+            config=config,
+            from_addresses=["a@b.com"],
+            forward_to=["elsewhere@example.com"],
+        )
+
+        assert result["status"] == "created"
+
+
+class TestCreateRuleSurface:
+    async def test_permanent_delete_is_not_offered(self):
+        """Hard delete of incoming mail is a takeover primitive; delete is recoverable."""
+        import inspect
+
+        assert "permanent_delete" not in inspect.signature(create_rule).parameters
+
+    async def test_bad_sequence_is_a_tool_input_error(self):
+        """Plain ValueError reaches the model as a bare 'Error executing tool'."""
+        from outlook_mcp.errors import ToolInputError
+
+        client = MagicMock()
+        with pytest.raises(ToolInputError):
+            await create_rule(
+                client,
+                "Rule",
+                config=_CFG,
+                from_addresses=["a@b.com"],
+                mark_as_read=True,
+                sequence=0,
+            )
+
+    async def test_bad_importance_is_a_tool_input_error(self):
+        from outlook_mcp.errors import ToolInputError
+
+        client = MagicMock()
+        with pytest.raises(ToolInputError):
+            await create_rule(
+                client,
+                "Rule",
+                config=_CFG,
+                from_addresses=["a@b.com"],
+                importance="urgent",
+                mark_as_read=True,
+            )
