@@ -75,6 +75,22 @@ def _copy_actions(existing: Any) -> Any:
     return actions
 
 
+_FORWARDING_ACTIONS = ("forward_to", "redirect_to", "forward_as_attachment_to")
+
+
+def _forwards_offsite(actions: Any) -> bool:
+    """True if this rule's actions send mail to an address outside the mailbox.
+
+    Used on re-enable: a disabled rule can be switched back on without any
+    action being supplied, which resumes whatever it does — including forwarding
+    to a third party — so the send gate has to look at what the rule *is*, not
+    only at what the caller passed.
+    """
+    if actions is None:
+        return False
+    return any(getattr(actions, attr, None) for attr in _FORWARDING_ACTIONS)
+
+
 async def list_rules(graph_client: Any) -> dict:
     """List all inbox rules, sorted by execution order (sequence).
 
@@ -254,6 +270,10 @@ async def update_rule(
     other actions survive: Graph replaces the ``actions`` object rather than
     merging it, so the current actions are read and sent back with the
     requested field overridden.
+
+    Re-enabling (``is_enabled=True``) reads the rule first: switching a
+    forwarding or redirecting rule back on requires the ``mail_send`` category,
+    because it resumes mailing a third party for as long as the rule exists.
     """
     check_permission(config, CATEGORY_MAIL_RULES, "outlook_update_rule")
     rule_id = validate_graph_id(rule_id)
@@ -273,8 +293,17 @@ async def update_rule(
         if sequence < 1:
             raise ToolInputError("sequence must be a positive integer")
         patch.sequence = sequence
+
+    # One read covers both reasons to look at the rule: re-pointing needs the
+    # existing actions to send back, and re-enabling needs them to see whether
+    # this rule emails somebody else.
+    needs_current = move_to_folder is not None or mark_as_read is not None or is_enabled is True
+    current = await builder.get() if needs_current else None
+
+    if is_enabled is True and _forwards_offsite(current.actions if current else None):
+        check_sends_mail(config, "outlook_update_rule", "re-enable a rule that forwards mail")
+
     if move_to_folder is not None or mark_as_read is not None:
-        current = await builder.get()
         actions = _copy_actions(current.actions if current else None)
         if move_to_folder is not None:
             actions.move_to_folder = await resolve_folder_id(graph_client, move_to_folder)

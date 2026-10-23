@@ -50,11 +50,13 @@ TOOL_GROUPS: dict[str, str] = {
     "outlook_copy_message": "mail",
     "outlook_batch_triage": "mail",
     "outlook_list_thread": "mail",
-    # rules
-    "outlook_list_rules": "mail",
-    "outlook_create_rule": "mail",
-    "outlook_update_rule": "mail",
-    "outlook_delete_rule": "mail",
+    # rules — their own group: the four schemas are the most expensive single
+    # feature here (~1.9k proxy tokens, mostly `create_rule`'s argument list), and
+    # a client that gated down to `mail` should not pay for them.
+    "outlook_list_rules": "rules",
+    "outlook_create_rule": "rules",
+    "outlook_update_rule": "rules",
+    "outlook_delete_rule": "rules",
     # drafts
     "outlook_list_drafts": "drafts",
     "outlook_create_draft": "drafts",
@@ -176,7 +178,10 @@ DESTRUCTIVE: set[str] = {
     "outlook_delete_inbox_override",
     # Creating a rule outlives the call: it can keep deleting or forwarding mail
     # indefinitely, so a client that asks before destructive calls must ask here.
+    # `outlook_update_rule` joins them because re-enabling a forwarding rule
+    # resumes the sending.
     "outlook_create_rule",
+    "outlook_update_rule",
     "outlook_delete_rule",
     "outlook_remove_draft_attachment",
 }

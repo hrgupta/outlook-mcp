@@ -445,3 +445,62 @@ class TestCreateRuleSurface:
                 importance="urgent",
                 mark_as_read=True,
             )
+
+
+class TestReEnablingAForwardingRule:
+    """Enabling a disabled rule resumes what it does — including forwarding.
+
+    `update_rule` cannot introduce `forward_to`, but `is_enabled=True` turns a
+    rule back on without any action being supplied, so a forwarding rule made in
+    the web UI (or disabled earlier) would resume mailing a third party with no
+    gate. The check therefore looks at the rule, not at the arguments.
+    """
+
+    async def test_enabling_a_disabled_forwarding_rule_needs_mail_send(self):
+        client = MagicMock()
+        current = _make_rule(
+            is_enabled=False,
+            actions=_make_actions(forward_to=[MagicMock()]),
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        with pytest.raises(PermissionDeniedError):
+            await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=True)
+
+        builder.patch.assert_not_awaited()
+
+    async def test_enabling_a_move_only_rule_is_allowed(self):
+        client = MagicMock()
+        current = _make_rule(
+            is_enabled=False,
+            actions=_make_actions(move_to_folder=_OLD_FOLDER_ID),
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=True)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_disabling_a_forwarding_rule_is_not_gated(self):
+        """Turning something off never needs the send gate."""
+        client = MagicMock()
+        current = _make_rule(
+            is_enabled=True,
+            actions=_make_actions(forward_to=[MagicMock()]),
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_redirect_and_forward_as_attachment_count_too(self):
+        for attr in ("redirect_to", "forward_as_attachment_to"):
+            client = MagicMock()
+            current = _make_rule(is_enabled=False, actions=_make_actions(**{attr: [MagicMock()]}))
+            _wire_single_rule(client, current=current, patched=current)
+
+            with pytest.raises(PermissionDeniedError):
+                await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=True)

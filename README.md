@@ -321,7 +321,7 @@ configured `timezone`; responses are always UTC.
 
 ### Inbox Rules
 
-Server-side rules: they run whether or not any Outlook client is open. A rule is **durable, not a one-off** — create one and it keeps applying to all future mail long after the agent that made it has disconnected. That is what makes rules useful, and it is also why `outlook_create_rule` is annotated destructive and why `forward_to` additionally requires the `mail_send` category: a forwarding rule keeps mailing a third party after the session ends, which is the standard way a compromised mailbox gets drained. Hard delete is not offered here — `delete` moves matching mail to Deleted Items, which is recoverable.
+Server-side rules: they run whether or not any Outlook client is open. A rule is **durable, not a one-off** — create one and it keeps applying to all future mail long after the agent that made it has disconnected. That is what makes rules useful, and it is also why `outlook_create_rule` and `outlook_update_rule` are annotated destructive — re-enabling one resumes whatever it does — and why `forward_to`, and re-enabling a rule that forwards or redirects, additionally require the `mail_send` category: a forwarding rule keeps mailing a third party after the session ends, which is the standard way a compromised mailbox gets drained. Hard delete is not offered here — `delete` moves matching mail to Deleted Items, which is recoverable.
 
 | Tool | Description |
 |------|-------------|
@@ -485,7 +485,7 @@ All 72 tool schemas load into the client's context every turn (the chars/4 proxy
 OUTLOOK_MCP_TOOLSETS="mail,calendar,digest,delta"
 ```
 
-Groups: `mail`, `drafts`, `attachments`, `calendar`, `contacts`, `todo`, `folders`, `digest`, `delta`, `admin`. Unset (the default) loads everything — fully backward compatible. This only affects which tools are advertised; enabled tools behave identically.
+Groups: `mail`, `rules`, `drafts`, `attachments`, `calendar`, `contacts`, `todo`, `folders`, `digest`, `delta`, `admin`. The four rule tools are their own `rules` group, so a client gated down to `mail` does not pay for them — they are the most expensive single feature in the surface. Unset (the default) loads everything — fully backward compatible. This only affects which tools are advertised; enabled tools behave identically.
 
 ### Two accounts, two instances (optional) — `OUTLOOK_MCP_CONFIG_DIR`
 

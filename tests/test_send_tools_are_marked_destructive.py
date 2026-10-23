@@ -59,8 +59,10 @@ def test_the_scan_finds_every_tool_that_can_send():
         "outlook_create_event",
         "outlook_update_event",
         "outlook_rsvp",
-        # A forwarding rule emails a third party long after the call returns.
+        # A forwarding rule emails a third party long after the call returns, and
+        # re-enabling one resumes it.
         "outlook_create_rule",
+        "outlook_update_rule",
     }
 
 

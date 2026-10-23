@@ -137,3 +137,13 @@ async def test_gating_actually_reduces_the_surface():
         _proxy_tokens([t.model_dump(exclude_none=True, by_alias=True) for t in mail_only])
         < _proxy_tokens([t.model_dump(exclude_none=True, by_alias=True) for t in full]) // 2
     )
+
+    # The rule tools are their own group: the most expensive feature here must be
+    # opt-in, so a `mail`-only client does not silently pay for it.
+    assert not [t for t in mail_only if t.name.endswith("_rule") or t.name == "outlook_list_rules"]
+    assert {n for n, g in toolsets.TOOL_GROUPS.items() if g == "rules"} == {
+        "outlook_list_rules",
+        "outlook_create_rule",
+        "outlook_update_rule",
+        "outlook_delete_rule",
+    }
