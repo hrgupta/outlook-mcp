@@ -78,12 +78,41 @@ def test_skill_description_matches_registration():
     assert int(match.group(1)) == len(_registered_tools())
 
 
+# Every prose mention of a count, with what it must equal. The first version of
+# this file checked only the two tool-count phrases below that happened to be on
+# hand, so "this has N tools", "N discrete tools" and "the N categories" could go
+# stale while every test passed. Listing the patterns explicitly keeps a new
+# sentence from silently escaping the net: a phrase that disappears fails the
+# "prose count missing" assert rather than being skipped.
+TOOL_COUNT_PATTERNS = (
+    r"All (\d+) tool schemas load",
+    r"unset loads all (\d+)",
+    r"this has (\d+) tools",
+    r"(\d+) discrete tools",
+)
+# "across N categories" is the README's documentation grouping (asserted against the
+# bullet list above); "the N categories" is the permission categories in SKILL.md,
+# which track VALID_CATEGORIES. Two different counts, so two different tests.
+PERMISSION_CATEGORY_PATTERNS = (r"the (\d+) categories",)
+
+
 def test_other_prose_counts_match_registration():
-    """The remaining prose mentions ('All N tool schemas', 'unset loads all N')."""
+    """Every prose mention of the tool count agrees with the registration."""
     total = len(_registered_tools())
-    for pattern in (r"All (\d+) tool schemas load", r"unset loads all (\d+)"):
+    for pattern in TOOL_COUNT_PATTERNS:
         match = re.search(pattern, README + SKILL)
         assert match, f"prose count missing: {pattern}"
         assert int(match.group(1)) == total, (
             f"{pattern!r} says {match.group(1)}, server registers {total}"
+        )
+
+
+def test_prose_category_counts_match_code():
+    """Category counts in the prose agree with VALID_CATEGORIES."""
+    expected = len(VALID_CATEGORIES)
+    for pattern in PERMISSION_CATEGORY_PATTERNS:
+        match = re.search(pattern, README + SKILL)
+        assert match, f"prose category count missing: {pattern}"
+        assert int(match.group(1)) == expected, (
+            f"{pattern!r} says {match.group(1)}, code defines {expected}"
         )
