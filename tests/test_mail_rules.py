@@ -245,12 +245,12 @@ class TestCreateRule:
             has_attachments=True,
             importance="high",
             move_to_folder="archive",
-            copy_to_folder="archive",
+            copy_to_folder="deleteditems",
             mark_as_read=True,
             forward_to=["wire-forward-9f3@example.com"],
             assign_categories=["wire-category-9f3"],
             stop_processing_rules=True,
-            sequence=7,
+            sequence=42,
         )
 
         # Every write argument, not only the convenient ones: an argument that
@@ -268,6 +268,12 @@ class TestCreateRule:
             "hasAttachments",
             "markAsRead",
             "stopProcessingRules",
+            # move and copy must be distinguishable: same value on both would
+            # let one of them silently fail to serialize.
+            "archive",
+            "deleteditems",
+            '"importance": "high"',
+            '"sequence": 42',
         )
 
 
