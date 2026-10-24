@@ -24,7 +24,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   across processes. The `mail_send` gate follows the indirect routes as well: a forwarding rule
   behind a `stop_processing_rules` rule starts delivering mail when the forwarding rule is
   moved up, or when that stop rule is reordered, disabled or deleted, so those changes require
-  `mail_send` too — none of them names a forwarding address. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
+  `mail_send` too — none of them names a forwarding address. Two follow-ups from the same class of defect: reordering a
+  *disabled* forwarding rule no longer demands `mail_send` (a disabled rule delivers nothing), and
+  `mailbox_settings_write` is refused alongside `read_only_consent` rather than being silently
+  ignored. `outlook_list_rules` also reports `has_error`, and both read and write paths walk the
+  model's own attributes instead of a hand-kept field list, so a field Graph adds later is neither
+  hidden from the read nor dropped from an update. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
   (measured 14,805).
 
 ### Fixed

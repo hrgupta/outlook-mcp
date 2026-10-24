@@ -50,6 +50,7 @@ def _make_rule(
     rule.sequence = sequence
     rule.is_enabled = is_enabled
     rule.is_read_only = False
+    rule.has_error = False
     rule.actions = actions
     rule.conditions = conditions
     return rule
@@ -106,6 +107,7 @@ class TestListRules:
             "is_enabled": True,
             "sequence": 2,
             "is_read_only": False,
+            "has_error": False,
             "conditions": {},
             "actions": {},
         }
@@ -820,3 +822,65 @@ class TestDisabledStopRuleDoesNotGate:
 
         with pytest.raises(PermissionDeniedError):
             await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
+
+
+class TestAuditSweepRegressions:
+    """The same classes of defect Greptile found, checked across the feature."""
+
+    async def test_size_range_reports_only_the_bound_it_has(self):
+        """A half-open range must not surface as {"min": 10, "max": None}."""
+        from msgraph.generated.models.message_rule_predicates import MessageRulePredicates
+        from msgraph.generated.models.size_range import SizeRange
+
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        predicates = MessageRulePredicates()
+        predicates.within_size_range = SizeRange()
+        predicates.within_size_range.minimum_size = 1024
+        collection.get = AsyncMock(
+            return_value=MagicMock(value=[_make_rule(conditions=predicates)])
+        )
+
+        rule = (await list_rules(client))["rules"][0]
+
+        assert rule["conditions"]["within_size_range"] == {"min": 1024}
+
+    async def test_unknown_action_fields_survive_an_update(self):
+        """`_copy_actions` copies what the rule has, not a hand-kept list."""
+        client = MagicMock()
+        actions = _make_actions(move_to_folder=_OLD_FOLDER_ID)
+        actions.additional_data = {"wireUnknownAction9d1": "keep-me"}
+        current = _make_rule(actions=actions)
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        await update_rule(client, "rule-1", config=_CFG, move_to_folder=_NEW_FOLDER_ID)
+
+        patched = builder.patch.await_args.args[0]
+        assert patched.actions.additional_data == {"wireUnknownAction9d1": "keep-me"}
+        assert patched.actions.move_to_folder == _NEW_FOLDER_ID
+
+    async def test_reordering_a_disabled_forwarder_is_not_gated(self):
+        """The mirror of the over-reach: a disabled rule is not delivering mail."""
+        client = MagicMock()
+        current = _make_rule(
+            sequence=9,
+            is_enabled=False,
+            actions=_make_actions(forward_to=[_recipient("wire-off-2f8@example.com")]),
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, sequence=1)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_list_reports_a_rule_that_exchange_marked_as_broken(self):
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        broken = _make_rule()
+        broken.has_error = True
+        collection.get = AsyncMock(return_value=MagicMock(value=[broken]))
+
+        rule = (await list_rules(client))["rules"][0]
+
+        assert rule["has_error"] is True

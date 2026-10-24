@@ -215,6 +215,26 @@ class Config(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _mailbox_settings_write_needs_a_write_consent(self) -> "Config":
+        """Refuse a scope request that the sign-in would never make.
+
+        `read_only_consent` asks for the read scopes only, so `get_scopes` returns
+        the read list whatever `mailbox_settings_write` says. Loaded together, the
+        key would be silently ignored and every rule write would fail with a 403
+        that names none of it — the same dead end as documenting a permission the
+        code never requests.
+        """
+        if self.mailbox_settings_write and self.read_only_consent:
+            raise ValueError(
+                "mailbox_settings_write: true cannot be combined with read_only_consent: "
+                "true. That consent asks for the read scopes only, so MailboxSettings."
+                "ReadWrite would never be requested and every inbox-rule write would "
+                "fail. Drop one: read_only_consent for a registration that must never "
+                "write, mailbox_settings_write for one that should manage rules."
+            )
+        return self
+
     @field_validator("allow_categories")
     @classmethod
     def _validate_allow_categories(cls, value: list[str]) -> list[str]:

@@ -658,14 +658,14 @@ class TestMailboxSettingsWriteScope:
         assert "MailboxSettings.Read" not in scopes
 
     def test_read_only_consent_is_untouched(self):
-        """An app registration restricted to reads must not be asked for writes."""
+        """An app registration restricted to reads must not be asked for writes.
+
+        The contradictory pairing (`read_only_consent` + `mailbox_settings_write`)
+        is refused at config load, so this method never has to silently ignore the
+        flag — see TestMailboxSettingsWriteConfig in test_config.py.
+        """
         scopes = AuthManager(
-            Config(
-                client_id="test",
-                read_only=True,
-                read_only_consent=True,
-                mailbox_settings_write=True,
-            )
+            Config(client_id="test", read_only=True, read_only_consent=True)
         ).get_scopes()
         assert "MailboxSettings.ReadWrite" not in scopes
         assert "MailboxSettings.Read" in scopes

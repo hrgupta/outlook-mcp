@@ -53,24 +53,21 @@ def _copy_actions(existing: Any) -> Any:
     actions = MessageRuleActions()
     if existing is None:
         return actions
-    # Copy only what the rule actually has. Assigning an attribute None marks it
-    # changed in the backing store, and the request adapter then emits that null
-    # under its *Python* name — the shape that made Graph answer 400 on a partial
-    # contact address (see tests/test_write_payloads_reach_the_wire.py).
-    for attr in (
-        "assign_categories",
-        "copy_to_folder",
-        "delete",
-        "forward_as_attachment_to",
-        "forward_to",
-        "mark_as_read",
-        "mark_importance",
-        "move_to_folder",
-        "permanent_delete",
-        "redirect_to",
-        "stop_processing_rules",
-    ):
-        value = getattr(existing, attr, None)
+    # Copy what the rule actually has, not a hand-kept list of names: a field
+    # Graph adds later would otherwise be dropped from every update silently, and
+    # the rule would lose it the first time anyone re-pointed it.
+    #
+    # Only what is set: assigning an attribute None marks it changed in the
+    # backing store, and the request adapter then emits that null under its
+    # *Python* name — the shape that made Graph answer 400 on a partial contact
+    # address (see tests/test_write_payloads_reach_the_wire.py).
+    for attr, value in vars(existing).items():
+        if attr.startswith("_") or attr in {"backing_store", "odata_type"}:
+            continue
+        if attr == "additional_data":
+            if value:
+                actions.additional_data = value
+            continue
         if value is not None:
             setattr(actions, attr, value)
     return actions
@@ -109,35 +106,66 @@ def _forwards_offsite(actions: Any) -> bool:
     return any(getattr(actions, attr, None) for attr in _FORWARDING_ACTIONS)
 
 
-_CONDITION_FIELDS = (
-    "body_contains",
-    "body_or_subject_contains",
-    "from_addresses",
-    "has_attachments",
-    "header_contains",
-    "importance",
-    "message_action_flag",
-    "recipient_contains",
-    "sender_contains",
-    "sent_cc_addresses",
-    "sent_to_addresses",
-    "subject_contains",
-    "within_size_range",
-)
+_BLOCK_INTERNALS = {"backing_store", "additional_data", "odata_type"}
 
-_ACTION_FIELDS = (
-    "assign_categories",
-    "copy_to_folder",
-    "delete",
-    "forward_as_attachment_to",
-    "forward_to",
-    "mark_as_read",
-    "mark_importance",
-    "move_to_folder",
-    "permanent_delete",
-    "redirect_to",
-    "stop_processing_rules",
-)
+
+def _plain(value: Any) -> Any:
+    """Turn one Graph value into JSON-able output, scrubbing caller-visible text."""
+    if isinstance(value, str):
+        return sanitize_output(value)
+    if isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    if hasattr(value, "email_address"):
+        return sanitize_output(getattr(value.email_address, "address", None) or "")
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    return sanitize_output(str(value))
+
+
+def _describe_block(block: Any) -> dict:
+    """Serialize a rule's conditions or actions, omitting what it does not set.
+
+    Driven by the model's own attributes rather than a hand-written list of field
+    names: a rule you cannot read the behaviour of cannot be audited — "is
+    anything forwarding mail out of this mailbox?" is the question that matters
+    and the rule's name does not answer it. A fixed list has the same failure in
+    the read direction that a fixed copy list has in the write direction: an
+    attribute Graph adds later is silently invisible. Unset fields are omitted
+    rather than emitted as null, and a size range reports only the bound it has.
+    """
+    if block is None:
+        return {}
+    described: dict[str, Any] = {}
+    for attr, value in vars(block).items():
+        if attr.startswith("_") or attr in _BLOCK_INTERNALS:
+            continue
+        if value is None or value == []:
+            continue
+        if attr == "within_size_range":
+            bounds = {
+                "min": getattr(value, "minimum_size", None),
+                "max": getattr(value, "maximum_size", None),
+            }
+            described[attr] = {k: v for k, v in bounds.items() if v is not None}
+            continue
+        described[attr] = _plain(value)
+    return described
+
+
+def _describe_conditions(conditions: Any) -> dict:
+    return _describe_block(conditions)
+
+
+def _describe_actions(actions: Any) -> dict:
+    return _describe_block(actions)
+
+
+def _address(recipient: Any) -> str:
+    """The address out of a Graph ``Recipient``, scrubbed for display."""
+    email = getattr(recipient, "email_address", None)
+    return sanitize_output(getattr(email, "address", None) or "")
 
 
 def _stops_processing(actions: Any) -> bool:
@@ -179,66 +207,6 @@ async def _rules_in_inbox(graph_client: Any) -> list[Any]:
     return list(response.value) if response and response.value else []
 
 
-def _address(recipient: Any) -> str:
-    """The address out of a Graph ``Recipient``, scrubbed for display."""
-    email = getattr(recipient, "email_address", None)
-    return sanitize_output(getattr(email, "address", None) or "")
-
-
-def _describe_conditions(conditions: Any) -> dict:
-    """Serialize a rule's conditions into plain JSON, dropping what it does not set.
-
-    A rule you cannot read the behaviour of cannot be audited: "is anything
-    forwarding mail out of this mailbox?" is the question that matters and the
-    name does not answer it. Empty sub-objects are omitted rather than emitted as
-    ``{}`` so a move-only rule reads as one short block.
-    """
-    if conditions is None:
-        return {}
-    described: dict[str, Any] = {}
-    for attr in _CONDITION_FIELDS:
-        value = getattr(conditions, attr, None)
-        if value is None or value == []:
-            continue
-        if attr == "from_addresses":
-            described[attr] = [_address(a) for a in value]
-        elif attr == "within_size_range":
-            described[attr] = {
-                "min": getattr(value, "minimum_size", None),
-                "max": getattr(value, "maximum_size", None),
-            }
-        elif isinstance(value, list):
-            described[attr] = [
-                sanitize_output(str(v)) if isinstance(v, str) else str(v) for v in value
-            ]
-        else:
-            described[attr] = value
-    return described
-
-
-def _describe_actions(actions: Any) -> dict:
-    """Serialize a rule's actions into plain JSON, dropping what it does not set.
-
-    Same reason as `_describe_conditions`, and more load-bearing: a forwarded
-    address is the single most important fact about a rule someone did not
-    write themselves.
-    """
-    if actions is None:
-        return {}
-    described: dict[str, Any] = {}
-    for attr in _ACTION_FIELDS:
-        value = getattr(actions, attr, None)
-        if value is None or value == []:
-            continue
-        if attr in _FORWARDING_ACTIONS:
-            described[attr] = [_address(a) for a in value]
-        elif attr == "assign_categories":
-            described[attr] = [sanitize_output(str(c)) for c in value]
-        else:
-            described[attr] = value
-    return described
-
-
 async def list_rules(graph_client: Any) -> dict:
     """List all inbox rules, sorted by execution order (sequence).
 
@@ -260,6 +228,7 @@ async def list_rules(graph_client: Any) -> dict:
                 "is_enabled": r.is_enabled,
                 "sequence": r.sequence,
                 "is_read_only": r.is_read_only,
+                "has_error": getattr(r, "has_error", None),
                 "conditions": _describe_conditions(getattr(r, "conditions", None)),
                 "actions": _describe_actions(getattr(r, "actions", None)),
             }
@@ -481,7 +450,14 @@ async def update_rule(
         if is_enabled is True and _forwards_offsite(current_actions):
             check_sends_mail(config, "outlook_update_rule", "re-enable a rule that forwards mail")
 
-        if sequence is not None and _forwards_offsite(current_actions):
+        # Only an enabled rule can be delivering: reordering a disabled one is
+        # bookkeeping, and gating it would demand mail_send for mail that is not
+        # moving — the same over-reach as gating an already-disabled stop rule.
+        if (
+            sequence is not None
+            and getattr(current, "is_enabled", False)
+            and _forwards_offsite(current_actions)
+        ):
             check_sends_mail(
                 config,
                 "outlook_update_rule",
