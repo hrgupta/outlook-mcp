@@ -22,7 +22,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   is the one that matters. Overlapping updates of one rule are serialized in-process; Graph
   returns no `@odata.etag` on this endpoint, so there is no `If-Match` and the last write wins
   across processes. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
-  (measured 14,709).
+  (measured 14,734).
 
 ### Fixed
 
