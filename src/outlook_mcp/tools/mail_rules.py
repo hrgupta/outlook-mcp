@@ -140,6 +140,40 @@ _ACTION_FIELDS = (
 )
 
 
+def _stops_processing(actions: Any) -> bool:
+    """True if this rule halts evaluation, hiding the rules that follow it."""
+    return bool(getattr(actions, "stop_processing_rules", None)) if actions is not None else False
+
+
+def _masks_a_forwarding_rule(current: Any, rules: Any) -> bool:
+    """True if `current` halts processing ahead of an enabled forwarding rule.
+
+    A forwarding rule placed after a `stop_processing_rules` rule never runs.
+    Changing *that* stop rule — disabling it, reordering it later, deleting it —
+    switches the forwarding on without touching the forwarding rule at all, so
+    the send gate has to look at the rules the stop rule is hiding, not only at
+    the one named in the request.
+    """
+    if not _stops_processing(getattr(current, "actions", None)):
+        return False
+    current_sequence = getattr(current, "sequence", None) or 0
+    for rule in rules or []:
+        if getattr(rule, "id", None) == getattr(current, "id", None):
+            continue
+        if not getattr(rule, "is_enabled", False):
+            continue
+        if not _forwards_offsite(getattr(rule, "actions", None)):
+            continue
+        if (getattr(rule, "sequence", None) or 0) > current_sequence:
+            return True
+    return False
+
+
+async def _rules_in_inbox(graph_client: Any) -> list[Any]:
+    response = await graph_client.me.mail_folders.by_mail_folder_id("inbox").message_rules.get()
+    return list(response.value) if response and response.value else []
+
+
 def _address(recipient: Any) -> str:
     """The address out of a Graph ``Recipient``, scrubbed for display."""
     email = getattr(recipient, "email_address", None)
@@ -389,6 +423,13 @@ async def update_rule(
     forwarding or redirecting rule back on requires the ``mail_send`` category,
     because it resumes mailing a third party for as long as the rule exists.
 
+    Ordering is gated too, because it can switch forwarding on without any
+    forwarding argument being supplied: a forwarding rule behind a
+    ``stop_processing_rules`` rule never runs, so moving that forwarding rule
+    earlier, or moving / disabling the stop rule, starts delivering mail. Any
+    sequence change to a forwarding rule, and any change that unmasks a later
+    forwarding rule, requires ``mail_send``.
+
     Overlapping updates of the same rule are serialized inside this server, so
     two calls in flight from one session cannot undo each other. Across
     processes the last write wins: Graph's ``messageRules`` endpoint returns no
@@ -417,13 +458,40 @@ async def update_rule(
     # One read covers both reasons to look at the rule: re-pointing needs the
     # existing actions to send back, and re-enabling needs them to see whether
     # this rule emails somebody else.
-    needs_current = move_to_folder is not None or mark_as_read is not None or is_enabled is True
+    needs_current = (
+        move_to_folder is not None
+        or mark_as_read is not None
+        or is_enabled is True
+        # Reordering can switch forwarding on without touching the rule that
+        # does it: moving a forwarding rule ahead of the stop rule that was
+        # hiding it, or moving / disabling that stop rule back behind it.
+        or sequence is not None
+        or is_enabled is False
+    )
 
     async with _rule_lock(rule_id):
         current = await builder.get() if needs_current else None
+        current_actions = current.actions if current else None
 
-        if is_enabled is True and _forwards_offsite(current.actions if current else None):
+        if is_enabled is True and _forwards_offsite(current_actions):
             check_sends_mail(config, "outlook_update_rule", "re-enable a rule that forwards mail")
+
+        if sequence is not None and _forwards_offsite(current_actions):
+            check_sends_mail(
+                config,
+                "outlook_update_rule",
+                "move a forwarding rule in the run order, ahead of the rule hiding it",
+            )
+
+        if (is_enabled is False or sequence is not None) and _masks_a_forwarding_rule(
+            current,
+            await _rules_in_inbox(graph_client) if _stops_processing(current_actions) else None,
+        ):
+            check_sends_mail(
+                config,
+                "outlook_update_rule",
+                "let a later forwarding rule run by changing the rule that stops processing",
+            )
 
         if move_to_folder is not None or mark_as_read is not None:
             actions = _copy_actions(current.actions if current else None)
@@ -444,12 +512,30 @@ async def update_rule(
 
 
 async def delete_rule(graph_client: Any, rule_id: str, *, config: Config) -> dict:
-    """Delete an inbox rule by ID. Irreversible."""
+    """Delete an inbox rule by ID. Irreversible.
+
+    Deleting a rule that halts processing can start a later forwarding rule, so
+    the same ``mail_send`` check that guards creating or re-enabling one applies
+    here when the rule being deleted is what was keeping the forwarding off.
+    """
     check_permission(config, CATEGORY_MAIL_RULES, "outlook_delete_rule")
     rule_id = validate_graph_id(rule_id)
-    await (
-        graph_client.me.mail_folders.by_mail_folder_id("inbox")
-        .message_rules.by_message_rule_id(rule_id)
-        .delete()
-    )
+
+    builder = graph_client.me.mail_folders.by_mail_folder_id(
+        "inbox"
+    ).message_rules.by_message_rule_id(rule_id)
+
+    async with _rule_lock(rule_id):
+        current = await builder.get()
+        if _stops_processing(getattr(current, "actions", None)) and _masks_a_forwarding_rule(
+            current, await _rules_in_inbox(graph_client)
+        ):
+            check_sends_mail(
+                config,
+                "outlook_delete_rule",
+                "let a later forwarding rule run by deleting the rule that stops processing",
+            )
+        await builder.delete()
+
+    _rule_locks.pop(rule_id, None)
     return {"status": "deleted", "id": rule_id}

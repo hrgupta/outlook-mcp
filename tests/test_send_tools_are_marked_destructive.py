@@ -63,6 +63,8 @@ def test_the_scan_finds_every_tool_that_can_send():
         # re-enabling one resumes it.
         "outlook_create_rule",
         "outlook_update_rule",
+        # Partly: deleting the stop rule that hides a forwarding rule starts it.
+        "outlook_delete_rule",
     }
 
 

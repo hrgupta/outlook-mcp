@@ -240,16 +240,32 @@ class TestCreateRule:
             config=_CFG,
             from_addresses=["wire-sender-9f3@example.com"],
             subject_contains=["wire-subject-9f3"],
+            body_contains=["wire-body-9f3"],
+            sender_contains=["wire-sender-9f3"],
+            has_attachments=True,
+            importance="high",
             move_to_folder="archive",
+            copy_to_folder="archive",
             mark_as_read=True,
+            forward_to=["wire-forward-9f3@example.com"],
+            assign_categories=["wire-category-9f3"],
             stop_processing_rules=True,
+            sequence=7,
         )
 
+        # Every write argument, not only the convenient ones: an argument that
+        # exists on the model and never reaches the payload is invisible until
+        # someone trusts the rule it failed to create.
         assert_on_wire(
             collection.post.await_args.args[0],
             "wire-rule-9f3",
             "wire-sender-9f3@example.com",
             "wire-subject-9f3",
+            "wire-body-9f3",
+            "wire-sender-9f3",
+            "wire-forward-9f3@example.com",
+            "wire-category-9f3",
+            "hasAttachments",
             "markAsRead",
             "stopProcessingRules",
         )
@@ -604,44 +620,6 @@ class TestOverlappingUpdates:
 class TestWriteArgumentsReachTheWire:
     """CLAUDE.md: each write argument must appear in the serialized payload."""
 
-    async def test_every_create_argument_serializes(self):
-        client = MagicMock()
-        collection = _wire_listing(_wire_rules(client), [1])
-        collection.post = AsyncMock(return_value=_make_rule(rule_id="new"))
-
-        await create_rule(
-            client,
-            "wire-rule-full-8c2",
-            config=_CFG,
-            from_addresses=["wire-from-8c2@example.com"],
-            subject_contains=["wire-subject-8c2"],
-            body_contains=["wire-body-8c2"],
-            sender_contains=["wire-sender-8c2"],
-            has_attachments=True,
-            importance="high",
-            move_to_folder="archive",
-            copy_to_folder="archive",
-            mark_as_read=True,
-            forward_to=["wire-forward-8c2@example.com"],
-            assign_categories=["wire-category-8c2"],
-            stop_processing_rules=True,
-            sequence=7,
-        )
-
-        assert_on_wire(
-            collection.post.await_args.args[0],
-            "wire-rule-full-8c2",
-            "wire-from-8c2@example.com",
-            "wire-subject-8c2",
-            "wire-body-8c2",
-            "wire-sender-8c2",
-            "wire-forward-8c2@example.com",
-            "wire-category-8c2",
-            "hasAttachments",
-            "markAsRead",
-            "stopProcessingRules",
-        )
-
     async def test_forwarding_recipients_survive_a_repoint(self):
         """The copied actions must serialize, not just sit on the model."""
         client = MagicMock()
@@ -664,3 +642,118 @@ class TestWriteArgumentsReachTheWire:
             _NEW_FOLDER_ID,
         )
         assert payload.actions.forward_to[0].email_address.address == "wire-keep-9d4@example.com"
+
+
+class TestRunOrderCannotUnmaskForwarding:
+    """Ordering starts forwarding without touching the rule that forwards.
+
+    A forwarding rule sitting behind a `stop_processing_rules` rule never runs.
+    Move the forwarding rule up, or move / disable / delete the stop rule, and
+    it starts delivering mail — with no `forward_to` argument anywhere in the
+    request that did it.
+    """
+
+    @staticmethod
+    def _forwarder(rule_id="rule-2", sequence=4, enabled=True):
+        return _make_rule(
+            rule_id=rule_id,
+            name="Forward everything",
+            sequence=sequence,
+            is_enabled=enabled,
+            actions=_make_actions(forward_to=[_recipient("wire-out-4c7@example.com")]),
+        )
+
+    async def test_moving_a_forwarding_rule_needs_mail_send(self):
+        client = MagicMock()
+        current = _make_rule(
+            sequence=9, actions=_make_actions(forward_to=[_recipient("a@example.com")])
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        with pytest.raises(PermissionDeniedError):
+            await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, sequence=1)
+
+        builder.patch.assert_not_awaited()
+
+    async def test_moving_a_forwarding_rule_is_allowed_with_mail_send(self):
+        client = MagicMock()
+        current = _make_rule(
+            sequence=9, actions=_make_actions(forward_to=[_recipient("a@example.com")])
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        result = await update_rule(client, "rule-1", config=_CFG, sequence=1)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_disabling_the_stop_rule_that_hides_a_forwarder_needs_mail_send(self):
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(stop_processing_rules=True)
+        )
+        builder = _wire_single_rule(client, current=stop, patched=stop)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, self._forwarder()]))
+
+        with pytest.raises(PermissionDeniedError):
+            await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
+
+        builder.patch.assert_not_awaited()
+
+    async def test_disabling_a_stop_rule_with_no_forwarder_behind_it_is_allowed(self):
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(stop_processing_rules=True)
+        )
+        builder = _wire_single_rule(client, current=stop, patched=stop)
+        mover = _make_rule(
+            rule_id="rule-3", sequence=4, actions=_make_actions(move_to_folder=_OLD_FOLDER_ID)
+        )
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, mover]))
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_deleting_a_masking_stop_rule_needs_mail_send(self):
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(stop_processing_rules=True)
+        )
+        builder = _wire_single_rule(client, current=stop, patched=stop)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, self._forwarder()]))
+
+        with pytest.raises(PermissionDeniedError):
+            await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
+
+        builder.delete.assert_not_awaited()
+
+    async def test_deleting_a_plain_rule_is_not_gated(self):
+        client = MagicMock()
+        plain = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(move_to_folder=_OLD_FOLDER_ID)
+        )
+        builder = _wire_single_rule(client, current=plain, patched=plain)
+        _wire_rules(client).get = AsyncMock(
+            return_value=MagicMock(value=[plain, self._forwarder()])
+        )
+
+        result = await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
+
+        assert result == {"status": "deleted", "id": "rule-1"}
+        builder.delete.assert_awaited_once()
+
+    async def test_a_disabled_forwarder_behind_the_stop_rule_does_not_gate(self):
+        """Nothing is masked if the forwarding rule is off anyway."""
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(stop_processing_rules=True)
+        )
+        _wire_single_rule(client, current=stop, patched=stop)
+        off_forwarder = self._forwarder(enabled=False)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, off_forwarder]))
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
+
+        assert result["status"] == "updated"

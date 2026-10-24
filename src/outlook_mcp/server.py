@@ -765,7 +765,9 @@ async def outlook_update_rule(
     """Update an existing inbox rule (partial patch — only provided fields change).
 
     Pass is_enabled=False to disable a rule without deleting it. `move_to_folder`
-    accepts display names, well-known names, or Graph IDs.
+    accepts display names, well-known names, or Graph IDs. Changing the order of a
+    forwarding rule, or of a rule that stops processing ahead of one, needs the
+    mail_send permission: that is what starts the forwarding.
     """
     client = _get_graph_client(ctx)
     config = _get_config(ctx)
@@ -784,7 +786,11 @@ async def outlook_update_rule(
 @mcp.tool()
 @_wrap_tool_errors
 async def outlook_delete_rule(ctx: Context, rule_id: str) -> dict:
-    """Delete an inbox rule by ID. Irreversible."""
+    """Delete an inbox rule by ID. Irreversible.
+
+    Deleting a rule that stops processing can start a later forwarding rule, so
+    that case needs the mail_send permission.
+    """
     client = _get_graph_client(ctx)
     config = _get_config(ctx)
     return await mail_rules.delete_rule(client.sdk_client, rule_id, config=config)

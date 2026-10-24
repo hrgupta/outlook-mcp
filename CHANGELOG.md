@@ -21,8 +21,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rule's conditions and actions, not only its name and status — a forwarding rule you cannot see
   is the one that matters. Overlapping updates of one rule are serialized in-process; Graph
   returns no `@odata.etag` on this endpoint, so there is no `If-Match` and the last write wins
-  across processes. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
-  (measured 14,734).
+  across processes. The `mail_send` gate follows the indirect routes as well: a forwarding rule
+  behind a `stop_processing_rules` rule starts delivering mail when the forwarding rule is
+  moved up, or when that stop rule is reordered, disabled or deleted, so those changes require
+  `mail_send` too — none of them names a forwarding address. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
+  (measured 14,805).
 
 ### Fixed
 

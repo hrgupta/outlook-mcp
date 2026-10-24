@@ -92,15 +92,17 @@ CHARS_PER_TOKEN = 4
 # (#175). Six arguments do not fit the ~100 tokens left, so this is a deliberate
 # raise to 13,700: ~0.8% headroom.
 #
-# 14,734 on the 72-tool surface, measured after the rebase onto that 13,586 main
-# and the review round that made `outlook_list_rules` return conditions and actions
-# (+25 in the tool docstring, which is what the model reads):
+# 14,805 on the 72-tool surface, measured after the rebase onto that 13,586 main
+# and two review rounds: `outlook_list_rules` returns conditions and actions (+25 in
+# the tool docstring, which is what the model reads), and update/delete document the
+# ordering gate that starts a hidden forwarding rule (+71) — a gate the model cannot
+# respect without being told it exists:
 # the four inbox-rule schemas (+1,123, ~281 each), of which `outlook_create_rule`
 # is most of it — 14 optional arguments, the price of exposing Graph's whole
 # predicate/action set in one call. Review asked for a sentence in both rule
 # docstrings saying a rule outlives the session, which is worth paying: a rule is
 # the write most likely to be induced by the mail it acts on. Deliberate raise to
-# 15,000: ~2% headroom, room for a wording fix, not for another batch. The rule
+# 15,000: ~1.3% headroom, room for a wording fix, not for another batch. The rule
 # tools are their own `rules` toolset group, so a client that gates down to `mail`
 # does not pay this.
 TOOL_SURFACE_CEILING = 15_000

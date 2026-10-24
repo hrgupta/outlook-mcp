@@ -107,8 +107,8 @@ Pass `concise=True` to read tools (`outlook_list_inbox`, `outlook_read_message`,
 ### Mail Rules
 - `outlook_list_rules` — List inbox rules in execution order with each rule's conditions and actions (server-side; runs with no client open)
 - `outlook_create_rule` — Create a rule: sender/subject/body/attachment conditions, then move/copy/mark-read/delete/forward/categorize/stop actions. Rules are durable — they keep running after the session ends. `forward_to` also needs the `mail_send` category
-- `outlook_update_rule` — Rename, enable/disable, resequence or re-point a rule; its other actions are preserved. Re-enabling a rule that forwards or redirects needs `mail_send` too
-- `outlook_delete_rule` — Delete a rule by ID (irreversible)
+- `outlook_update_rule` — Rename, enable/disable, resequence or re-point a rule; its other actions are preserved. Re-enabling or reordering a rule that forwards or redirects needs `mail_send`, as does changing a `stop_processing_rules` rule that hides one
+- `outlook_delete_rule` — Delete a rule by ID (irreversible). Deleting a `stop_processing_rules` rule that hides a forwarding rule needs `mail_send`
 
 ### Calendar
 - `outlook_list_events` — List events in date range (expands recurring); each carries `type` (`occurrence`/`exception` for a series instance vs `singleInstance`; a `seriesMaster` never appears on a listing — use `outlook_get_event`) and `show_as` (the free/busy status); `calendar` reads a secondary calendar by name or ID (default calendar when omitted); a cursor continues the same calendar. `concise=True` drops `type` and `show_as`
