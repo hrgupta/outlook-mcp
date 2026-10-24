@@ -154,6 +154,11 @@ def _masks_a_forwarding_rule(current: Any, rules: Any) -> bool:
     the send gate has to look at the rules the stop rule is hiding, not only at
     the one named in the request.
     """
+    # A disabled rule stops nothing: Graph does not evaluate it, so nothing it was
+    # ordered ahead of is being hidden. Without this, cleaning up a stop rule that
+    # was already switched off demanded mail_send for mail it never touched.
+    if not getattr(current, "is_enabled", False):
+        return False
     if not _stops_processing(getattr(current, "actions", None)):
         return False
     current_sequence = getattr(current, "sequence", None) or 0

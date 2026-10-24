@@ -757,3 +757,60 @@ class TestRunOrderCannotUnmaskForwarding:
         result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
 
         assert result["status"] == "updated"
+
+
+class TestDisabledStopRuleDoesNotGate:
+    """A rule that is switched off hides nothing, so touching it is cleanup."""
+
+    @staticmethod
+    def _forwarder(sequence=4):
+        return _make_rule(
+            rule_id="rule-2",
+            name="Forward everything",
+            sequence=sequence,
+            actions=_make_actions(forward_to=[_recipient("wire-out-4c7@example.com")]),
+        )
+
+    async def test_deleting_an_already_disabled_stop_rule_is_allowed(self):
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1",
+            sequence=3,
+            is_enabled=False,
+            actions=_make_actions(stop_processing_rules=True),
+        )
+        builder = _wire_single_rule(client, current=stop, patched=stop)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, self._forwarder()]))
+
+        result = await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
+
+        assert result == {"status": "deleted", "id": "rule-1"}
+        builder.delete.assert_awaited_once()
+
+    async def test_disabling_an_already_disabled_stop_rule_is_allowed(self):
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1",
+            sequence=3,
+            is_enabled=False,
+            actions=_make_actions(stop_processing_rules=True),
+        )
+        builder = _wire_single_rule(client, current=stop, patched=stop)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, self._forwarder()]))
+
+        result = await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=False)
+
+        assert result["status"] == "updated"
+        builder.patch.assert_awaited()
+
+    async def test_an_enabled_stop_rule_still_gates(self):
+        """The control: the same shape, switched on, is still a bypass."""
+        client = MagicMock()
+        stop = _make_rule(
+            rule_id="rule-1", sequence=3, actions=_make_actions(stop_processing_rules=True)
+        )
+        _wire_single_rule(client, current=stop, patched=stop)
+        _wire_rules(client).get = AsyncMock(return_value=MagicMock(value=[stop, self._forwarder()]))
+
+        with pytest.raises(PermissionDeniedError):
+            await delete_rule(client, "rule-1", config=_CFG_ALLOW_RULES)
