@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from outlook_mcp.config import Config
 from outlook_mcp.errors import PermissionDeniedError, ReadOnlyError
 from outlook_mcp.tools.mail_rules import (
+    _recipient,
     create_rule,
     delete_rule,
     list_rules,
@@ -40,6 +42,7 @@ def _make_rule(
     sequence: int = 3,
     is_enabled: bool = True,
     actions=None,
+    conditions=None,
 ):
     rule = MagicMock()
     rule.id = rule_id
@@ -48,6 +51,7 @@ def _make_rule(
     rule.is_enabled = is_enabled
     rule.is_read_only = False
     rule.actions = actions
+    rule.conditions = conditions
     return rule
 
 
@@ -102,6 +106,8 @@ class TestListRules:
             "is_enabled": True,
             "sequence": 2,
             "is_read_only": False,
+            "conditions": {},
+            "actions": {},
         }
 
     async def test_names_are_sanitized(self):
@@ -504,3 +510,157 @@ class TestReEnablingAForwardingRule:
 
             with pytest.raises(PermissionDeniedError):
                 await update_rule(client, "rule-1", config=_CFG_ALLOW_RULES, is_enabled=True)
+
+
+class TestListRuleVisibility:
+    """A rule whose behaviour is invisible cannot be audited."""
+
+    async def test_list_returns_conditions_and_actions(self):
+        from msgraph.generated.models.message_rule_actions import MessageRuleActions
+        from msgraph.generated.models.message_rule_predicates import MessageRulePredicates
+        from msgraph.generated.models.size_range import SizeRange
+
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+
+        predicates = MessageRulePredicates()
+        predicates.sender_contains = ["wire-sender-7a1@example.com"]
+        predicates.subject_contains = ["wire-subject-7a1"]
+        predicates.has_attachments = True
+        predicates.within_size_range = SizeRange()
+        predicates.within_size_range.minimum_size = 1024
+        predicates.within_size_range.maximum_size = 4096
+
+        actions = MessageRuleActions()
+        actions.move_to_folder = _OLD_FOLDER_ID
+        actions.forward_to = [_recipient("wire-forward-7a1@example.com")]
+        actions.assign_categories = ["wire-category-7a1"]
+        actions.stop_processing_rules = True
+
+        collection.get = AsyncMock(
+            return_value=MagicMock(value=[_make_rule(conditions=predicates, actions=actions)])
+        )
+
+        result = await list_rules(client)
+        rule = result["rules"][0]
+
+        assert rule["actions"]["forward_to"] == ["wire-forward-7a1@example.com"]
+        assert rule["actions"]["move_to_folder"] == _OLD_FOLDER_ID
+        assert rule["actions"]["assign_categories"] == ["wire-category-7a1"]
+        assert rule["actions"]["stop_processing_rules"] is True
+        assert rule["conditions"]["sender_contains"] == ["wire-sender-7a1@example.com"]
+        assert rule["conditions"]["has_attachments"] is True
+        assert rule["conditions"]["within_size_range"] == {"min": 1024, "max": 4096}
+
+    async def test_unset_conditions_and_actions_are_omitted(self):
+        """No empty blocks: a rule reports only what it actually sets."""
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        collection.get = AsyncMock(
+            return_value=MagicMock(
+                value=[_make_rule(actions=_make_actions(move_to_folder=_OLD_FOLDER_ID))]
+            )
+        )
+
+        rule = (await list_rules(client))["rules"][0]
+
+        assert rule["actions"] == {"move_to_folder": _OLD_FOLDER_ID}
+        assert rule["conditions"] == {}
+
+
+class TestOverlappingUpdates:
+    """Two updaters must not undo each other inside one server."""
+
+    async def test_concurrent_field_updates_both_survive(self):
+        client = MagicMock()
+        state = {"actions": _make_actions(move_to_folder=_OLD_FOLDER_ID, mark_as_read=False)}
+
+        def _current():
+            rule = _make_rule(actions=state["actions"])
+            return rule
+
+        async def _get():
+            return _current()
+
+        async def _patch(payload):
+            actions = payload.actions
+            if actions is not None:
+                state["actions"] = actions
+            return _current()
+
+        builder = _wire_single_rule(client, current=_current(), patched=_current())
+        builder.get = AsyncMock(side_effect=_get)
+        builder.patch = AsyncMock(side_effect=_patch)
+
+        await asyncio.gather(
+            update_rule(client, "rule-lock-1", config=_CFG, move_to_folder=_NEW_FOLDER_ID),
+            update_rule(client, "rule-lock-1", config=_CFG, mark_as_read=True),
+        )
+
+        assert state["actions"].move_to_folder == _NEW_FOLDER_ID
+        assert state["actions"].mark_as_read is True
+
+
+class TestWriteArgumentsReachTheWire:
+    """CLAUDE.md: each write argument must appear in the serialized payload."""
+
+    async def test_every_create_argument_serializes(self):
+        client = MagicMock()
+        collection = _wire_listing(_wire_rules(client), [1])
+        collection.post = AsyncMock(return_value=_make_rule(rule_id="new"))
+
+        await create_rule(
+            client,
+            "wire-rule-full-8c2",
+            config=_CFG,
+            from_addresses=["wire-from-8c2@example.com"],
+            subject_contains=["wire-subject-8c2"],
+            body_contains=["wire-body-8c2"],
+            sender_contains=["wire-sender-8c2"],
+            has_attachments=True,
+            importance="high",
+            move_to_folder="archive",
+            copy_to_folder="archive",
+            mark_as_read=True,
+            forward_to=["wire-forward-8c2@example.com"],
+            assign_categories=["wire-category-8c2"],
+            stop_processing_rules=True,
+            sequence=7,
+        )
+
+        assert_on_wire(
+            collection.post.await_args.args[0],
+            "wire-rule-full-8c2",
+            "wire-from-8c2@example.com",
+            "wire-subject-8c2",
+            "wire-body-8c2",
+            "wire-sender-8c2",
+            "wire-forward-8c2@example.com",
+            "wire-category-8c2",
+            "hasAttachments",
+            "markAsRead",
+            "stopProcessingRules",
+        )
+
+    async def test_forwarding_recipients_survive_a_repoint(self):
+        """The copied actions must serialize, not just sit on the model."""
+        client = MagicMock()
+        current = _make_rule(
+            actions=_make_actions(
+                move_to_folder=_OLD_FOLDER_ID,
+                forward_to=[_recipient("wire-keep-9d4@example.com")],
+                assign_categories=["wire-keep-category-9d4"],
+            )
+        )
+        builder = _wire_single_rule(client, current=current, patched=current)
+
+        await update_rule(client, "rule-1", config=_CFG, move_to_folder=_NEW_FOLDER_ID)
+
+        payload = builder.patch.await_args.args[0]
+        assert_on_wire(
+            payload,
+            "wire-keep-9d4@example.com",
+            "wire-keep-category-9d4",
+            _NEW_FOLDER_ID,
+        )
+        assert payload.actions.forward_to[0].email_address.address == "wire-keep-9d4@example.com"

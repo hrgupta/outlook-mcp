@@ -92,7 +92,9 @@ CHARS_PER_TOKEN = 4
 # (#175). Six arguments do not fit the ~100 tokens left, so this is a deliberate
 # raise to 13,700: ~0.8% headroom.
 #
-# 14,709 on the 72-tool surface, measured after the rebase onto that 13,586 main:
+# 14,734 on the 72-tool surface, measured after the rebase onto that 13,586 main
+# and the review round that made `outlook_list_rules` return conditions and actions
+# (+25 in the tool docstring, which is what the model reads):
 # the four inbox-rule schemas (+1,123, ~281 each), of which `outlook_create_rule`
 # is most of it — 14 optional arguments, the price of exposing Graph's whole
 # predicate/action set in one call. Review asked for a sentence in both rule

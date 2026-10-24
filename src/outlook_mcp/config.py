@@ -112,6 +112,18 @@ class Config(BaseModel):
             "read_only: true."
         ),
     )
+    mailbox_settings_write: bool = Field(
+        default=False,
+        description=(
+            "Ask Microsoft for `MailboxSettings.ReadWrite` at sign-in instead of "
+            "`MailboxSettings.Read`, which is what the inbox-rule write tools need. "
+            "Off by default because it widens the token to every mailbox setting "
+            "(automatic replies, working hours, time zone), not only rules. Adding "
+            "the permission in the Azure portal is not enough on its own: consent is "
+            "granted per *requested* scope, so the sign-in has to name it and the "
+            "account has to consent again."
+        ),
+    )
     allow_categories: list[str] = Field(
         default_factory=list,
         description=(

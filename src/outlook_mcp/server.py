@@ -686,7 +686,9 @@ async def outlook_list_rules(ctx: Context) -> dict:
 
     Rules are server-side: they run whether or not any Outlook client is open.
     Each rule pairs conditions (what an incoming message must match) with
-    actions (what to do when it matches). Use outlook_create_rule to add one.
+    actions (what to do when it matches), and both are returned — check what an
+    unfamiliar rule forwards to before trusting the mailbox. Use
+    outlook_create_rule to add one.
     """
     client = _get_graph_client(ctx)
     return await mail_rules.list_rules(client.sdk_client)

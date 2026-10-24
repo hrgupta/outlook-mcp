@@ -15,8 +15,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rule before patching it, because Graph replaces a rule's `actions` object wholesale — a
   re-point that did not send the other actions back would silently clear them. The three write
   tools sit behind a new `mail_rules` permission category and need `MailboxSettings.ReadWrite`
-  on the token (the default consent set asks only for `MailboxSettings.Read`). Tool count
-  68 → 72; tool-surface ceiling raised 13,300 → 14,400 (measured 14,103).
+  on the token, which the new `mailbox_settings_write` config key adds to the sign-in: the
+  default consent set asks only for `MailboxSettings.Read`, and consent is per requested scope,
+  so the portal permission alone would not put it in the token. `outlook_list_rules` returns each
+  rule's conditions and actions, not only its name and status — a forwarding rule you cannot see
+  is the one that matters. Overlapping updates of one rule are serialized in-process; Graph
+  returns no `@odata.etag` on this endpoint, so there is no `If-Match` and the last write wins
+  across processes. Tool count 68 → 72; tool-surface ceiling raised 13,700 → 15,000
+  (measured 14,709).
 
 ### Fixed
 
