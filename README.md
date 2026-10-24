@@ -92,11 +92,11 @@ Listed on the [official MCP Registry](https://registry.modelcontextprotocol.io/v
 
 ### Agent-friendly shape (1.8.0)
 
-Two pure-code upgrades that make the same 57 tools cheaper and more recoverable for AI agents:
+Two pure-code upgrades that make the tools cheaper and more recoverable for AI agents:
 
-- **Concise mode** — pass `concise=True` to the five high-volume read tools (`outlook_list_inbox`, `outlook_read_message`, `outlook_search_mail`, `outlook_list_events`, `outlook_list_thread`) to drop bulky fields: full message bodies, quoted prior-message text in threads, body previews and categories on inbox listings — typical payload reduction ~10×. On `outlook_list_events` the trade is different and smaller: the attendee list becomes a count, and `organizer`, `response_status`, `type` and `show_as` come off, so a concise scan cannot tell a recurring occurrence from a one-off. Default `concise=False` preserves the existing response shape — strict backward compat.
+- **Concise mode** — pass `concise=True` to the six high-volume read tools (`outlook_list_inbox`, `outlook_read_message`, `outlook_read_messages`, `outlook_search_mail`, `outlook_list_events`, `outlook_list_thread`) to drop bulky fields: full message bodies, quoted prior-message text in threads, body previews and categories on inbox listings — typical payload reduction ~10×. On `outlook_list_events` the trade is different and smaller: the attendee list becomes a count, and `organizer`, `response_status`, `type` and `show_as` come off, so a concise scan cannot tell a recurring occurrence from a one-off. Default `concise=False` preserves the existing response shape — strict backward compat.
 
-- **Structured Graph errors** — every tool wraps msgraph SDK exceptions into `{code, message, action}` responses with operator-friendly recovery hints: re-auth on 401, a link to the repo's [ROADMAP dead-ends list](https://github.com/mpalermiti/outlook-mcp/blob/main/ROADMAP.md#investigated-and-not-viable) on 403/`ErrorAccessDenied`, re-list on 404/`ErrorItemNotFound`, back-off on 429, retry on 503. `OutlookMCPError` subclasses and validation errors pass through unchanged.
+- **Structured Graph errors** — every tool turns msgraph SDK exceptions into a tool error whose text carries Graph's message and a recovery hint: re-auth on 401, a link to the repo's [ROADMAP dead-ends list](https://github.com/mpalermiti/outlook-mcp/blob/main/ROADMAP.md#investigated-and-not-viable) on 403/`ErrorAccessDenied`, re-list on 404/`ErrorItemNotFound`, back-off on 429, retry on 503. `OutlookMCPError` subclasses and validation errors pass through unchanged.
 
 ---
 
@@ -239,7 +239,7 @@ uv run outlook-mcp serve    # Start MCP server (default, used by OpenClaw/Claude
 
 ### `me-token-to-replace is invalid` on every call
 
-You're on 1.22.0 installed after 2026-09-18. A fresh install of that version resolves `microsoft-kiota-*` 1.13 or later, which `msgraph-core` doesn't yet handle, so every `/me` request reaches Graph as `/users/me-token-to-replace`. Fixed in 1.22.1, which caps kiota below 1.13 ([#80](https://github.com/mpalermiti/outlook-mcp/issues/80)):
+You're on 1.22.0 installed after 2026-09-18. A fresh install of that version resolves `microsoft-kiota-*` 1.13 or later, which `msgraph-core` 1.5.1 doesn't handle, so every `/me` request reaches Graph as `/users/me-token-to-replace`. Fixed in 1.22.1, which caps kiota below 1.13 ([#80](https://github.com/mpalermiti/outlook-mcp/issues/80)). In 1.26.0 that cap is replaced by a `msgraph-core>=1.5.2` floor, which carries the fix and works with kiota 1.13+:
 
 ```bash
 uv tool upgrade outlook-graph-mcp
@@ -290,9 +290,9 @@ configured `timezone`; responses are always UTC.
 | Tool | Description |
 |------|-------------|
 | `outlook_list_inbox` | List messages in a folder. `folder` accepts display names, well-known names, or Graph IDs. Filter by read status, sender, date range, Focused Inbox classification. Pagination via `skip`. |
-| `outlook_read_message` | Get full message by ID. Format: `text`, `html`, or `full` (both). Pass `include_deferred_send=True` to also surface the draft's scheduled delivery time. |
+| `outlook_read_message` | Get full message by ID, or by its Message-ID header value (`<abc@example.com>`, matched exactly; the response's `id` is the Graph ID the other tools take). Format: `text`, `html`, or `full` (both). Pass `include_deferred_send=True` to also surface the draft's scheduled delivery time. |
 | `outlook_read_messages` | Bulk read up to 20 messages by ID via Graph `$batch` in one round-trip. Per-message shape matches `outlook_read_message` byte-for-byte for the same `(format, concise, include_deferred_send)`. Partial-failure tolerant: 404s on some IDs surface in `failures[]` without failing the whole call. Use NOT N `outlook_read_message` calls. |
-| `outlook_search_mail` | Search mail using KQL query. Optionally scope to a folder by name or ID. |
+| `outlook_search_mail` | Search mail using KQL query. Optionally scope to a folder by name or ID. A `cursor` continues the search in the folder it started in. |
 | `outlook_list_folders` | List mail folders with counts, `parent_id`, and `child_count`. Pass `recursive=true` to walk the full folder tree (subfolders included). |
 | `outlook_list_inbox_delta` | List only inbox changes since the last call. First call returns a full snapshot plus a `delta_token`; subsequent calls (token passed back) return only added/updated/deleted items. Deletes come back as `{id, is_deleted: True}`. Cursor is stateless — agent persists and replays. |
 | `outlook_changes_since` | One structured "since last call" digest composing mail/events/contacts deltas. Returns counts + `urgent_flagged` mail + top-5 `by_sender` + new/cancelled events. Each resource has an independent `delta_token`; stale-token recovery (HTTP 410) auto-resyncs that resource and surfaces `_meta.resync`. First-call snapshot is filtered to `fallback_window_hours` (default 24). Designed for recurring agent loops. |
@@ -319,7 +319,7 @@ configured `timezone`; responses are always UTC.
 | `outlook_set_inbox_override` | Upsert a per-sender Focused Inbox override (`focused` / `other`). Case-insensitive sender matching; PATCH-if-exists, else POST. |
 | `outlook_delete_inbox_override` | Delete a Focused Inbox override by ID. |
 
-### Inbox Rules
+### Mail Rules
 
 Server-side rules: they run whether or not any Outlook client is open. A rule is **durable, not a one-off** — create one and it keeps applying to all future mail long after the agent that made it has disconnected. That is what makes rules useful, and it is also why `outlook_create_rule` and `outlook_update_rule` are annotated destructive — re-enabling one resumes whatever it does — and why `forward_to`, and re-enabling a rule that forwards or redirects, additionally require the `mail_send` category: a forwarding rule keeps mailing a third party after the session ends, which is the standard way a compromised mailbox gets drained. Hard delete is not offered here — `delete` moves matching mail to Deleted Items, which is recoverable.
 
@@ -327,11 +327,11 @@ Server-side rules: they run whether or not any Outlook client is open. A rule is
 |------|-------------|
 | `outlook_list_rules` | List inbox rules in execution order, with conditions and actions. |
 | `outlook_create_rule` | Create a rule from sender/subject/body/attachment conditions and move, copy, mark-read, delete, forward, categorize or stop-processing actions. |
-| `outlook_update_rule` | Change a rule's name, enabled state, sequence, target folder or mark-read action. Other actions are preserved. |
+| `outlook_update_rule` | Change a rule's name, enabled state, sequence, target folder or mark-read action. Other actions are preserved; re-enabling a rule that forwards or redirects needs `mail_send`. |
 | `outlook_delete_rule` | Delete a rule by ID. Irreversible. |
 
-The three write tools are gated by the `mail_rules` permission category — add it to
-`allow_categories` (or leave `allow_categories` unset for a full read-write install).
+The three write tools are gated by the `mail_rules` permission category — add it to `allow_categories` (or leave `allow_categories` unset for a full read-write install).
+
 Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on the token. The default read-write consent set requests `MailboxSettings.Read` only, so a stock install can list rules but not change them. To enable the write tools:
 
 1. **Azure portal** → App registrations → your app → API permissions → Add a permission → Microsoft Graph → *Delegated* permissions → `MailboxSettings.ReadWrite` → Add. Grant admin consent if your tenant requires it.
@@ -349,7 +349,7 @@ Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on 
 
 | Tool | Description |
 |------|-------------|
-| `outlook_create_event` | Create event with location and attendees. (`is_online` has no effect on personal accounts — Graph ignores `isOnlineMeeting` for consumer mailboxes.) Pass `recurrence` to create a **series**: a shorthand (`daily`, `weekdays`, `weekly`, `monthly`, `yearly`, anchored on `start`) or a full [Graph recurrence object](https://learn.microsoft.com/graph/api/resources/patternedrecurrence) for anything else. `range.startDate` defaults to the event's start date. `show_as` sets the free/busy status Outlook labels "Show as" — `free`, `tentative`, `busy`, `oof` (out of office), `workingElsewhere`, or `unknown`; omit it and Graph applies its own default of `busy`. |
+| `outlook_create_event` | Create event with location and attendees. (`is_online` has no effect on personal accounts — Graph ignores `isOnlineMeeting` for consumer mailboxes.) Pass `recurrence` to create a **series**: a shorthand (`daily`, `weekdays`, `weekly`, `monthly`, `yearly`, anchored on `start`) or a full [Graph recurrence object](https://learn.microsoft.com/graph/api/resources/patternedrecurrence) for anything else. `range.startDate` defaults to the event's start date. `show_as` sets the free/busy status Outlook labels "Show as" — `free`, `tentative`, `busy`, `oof` (out of office), `workingElsewhere`, or `unknown`; omit it and Graph applies its own default of `busy`. `calendar` creates it in another calendar, resolved as `outlook_list_events` resolves it: omit (or `"primary"`) for the default, otherwise a display name or an ID from `outlook_list_calendars`. A calendar Graph lists as read-only (`canEdit: false`) is refused before anything is sent. The tools that take an event ID need no `calendar`: an ID reaches an event on any of your own calendars. |
 | `outlook_update_event` | Update event fields (subject, time, location, body, attendees, all-day, `show_as`). Only patches changed fields. Pass `recurrence` to turn a single event into a series, or `remove_recurrence=True` to turn a series back into a single event. `attendees` **replaces** the whole guest list and emails invitations/cancellations; `is_all_day` needs `start`+`end` in the same call, while `show_as` patches on its own. Patching a time keeps the zone the event is anchored in; `timezone` (with `start`+`end`) re-anchors it elsewhere, which is how a series created before zones existed gets repaired. A `start`, `end` or `recurrence` patch to a series with edited or deleted occurrences is refused, naming them — Graph would silently discard every one. |
 | `outlook_delete_event` | Delete a calendar event. |
 | `outlook_rsvp` | RSVP to an event: `accept`, `decline`, or `tentative`. Optionally include a message. |
@@ -360,9 +360,9 @@ Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on 
 |------|-------------|
 | `outlook_list_contacts` | List contacts with cursor pagination. Summaries carry `categories`; `outlook_search_contacts` omits the key because Graph's `$search` does not return it. |
 | `outlook_search_contacts` | Search contacts by name or email. |
-| `outlook_get_contact` | Get full contact details by ID, including home/business/other addresses, categories and personal notes. |
-| `outlook_create_contact` | Create a new contact. |
-| `outlook_update_contact` | Update contact fields. `home_address`, `business_address` and `other_address` take the shape `outlook_get_contact` returns — any subset of `street`, `city`, `state`, `postal_code`, `country_or_region` — and **replace** that whole address, so pass back every part you want to keep. Omit one to leave it untouched. |
+| `outlook_get_contact` | Get full contact details by ID, including `middle_name`, `job_title`, `birthday`, home/business/other addresses, categories and personal notes. |
+| `outlook_create_contact` | Create a new contact. `title` is the name prefix ("Dr.", "Ms."), which Outlook shows in the display name; the job goes in `job_title`. `phone_type` (`mobile`, the default, `business` or `home`) says which kind of number `phone` is. `birthday` is a date (`YYYY-MM-DD`), stored at 11:59 UTC so that it is the same date in every time zone from UTC−11 to UTC+12; `outlook_get_contact` returns that timestamp. `middle_name`, `personal_notes` and `categories` are set as given. |
+| `outlook_update_contact` | Update contact fields, including `middle_name`, `company`, `title`, `job_title` and `personal_notes`. `categories` **replaces** the contact's whole list, as `outlook_categorize_message` does a message's, so `[]` removes every category; read the contact first to add one. `phone_type` works as on create; a `business` or `home` number **replaces** that list of numbers with the one given. `clear_phones` empties the types it names, so `phone_type="business", clear_phones=["mobile"]` moves a number saved as mobile to business in one update. `home_address`, `business_address` and `other_address` take the shape `outlook_get_contact` returns — any subset of `street`, `city`, `state`, `postal_code`, `country_or_region` — and **replace** that whole address, so pass back every part you want to keep. Omit one to leave it untouched. `birthday` sets or replaces the date, as on create. |
 | `outlook_delete_contact` | Delete a contact. |
 | `outlook_list_contacts_delta` | List only contact changes since the last call. Deletes come back as `{id, is_deleted: True}`. Cursor is stateless. |
 
@@ -431,7 +431,7 @@ Creating, updating or deleting a rule also needs `MailboxSettings.ReadWrite` on 
 |------|-------------|
 | `outlook_list_thread` | Get all messages in a conversation thread. |
 | `outlook_copy_message` | Copy a message to another folder. |
-| `outlook_batch_triage` | Batch move/flag/categorize/mark_read (max 20 per call). Single Graph `/$batch` round-trip — 10-20× faster than per-message calls for large triage. |
+| `outlook_batch_triage` | Batch move/flag/categorize/mark_read (max 20 per call). Single Graph `/$batch` round-trip — 10-20× faster than per-message calls for large triage; a message Graph throttles is re-sent after its `Retry-After` rather than reported as failed. `mark_read` takes `true`/`false` (or `read`/`unread`). |
 
 ### User and Admin
 
@@ -481,11 +481,11 @@ Config lives at `~/.outlook-mcp/config.json` (created with `0600` permissions on
 All 72 tool schemas load into the client's context every turn (the chars/4 proxy `test_tool_surface_budget.py` measures with; a different yardstick than the ~8.6k o200k figure in ROADMAP for the 62-tool surface). A client that only needs part of the surface can set the `OUTLOOK_MCP_TOOLSETS` environment variable to a comma-separated list of tool groups, and only those load. The `account` group (auth / identity) is always available.
 
 ```bash
-# e.g. a recurring mail + calendar agent: ~30 tools instead of 72 (~58% fewer tool tokens/turn)
+# e.g. a recurring mail + calendar agent: 28 tools instead of 72 (about half the tool tokens per turn)
 OUTLOOK_MCP_TOOLSETS="mail,calendar,digest,delta"
 ```
 
-Groups: `mail`, `rules`, `drafts`, `attachments`, `calendar`, `contacts`, `todo`, `folders`, `digest`, `delta`, `admin`. The four rule tools are their own `rules` group, so a client gated down to `mail` does not pay for them — they are the most expensive single feature in the surface. Unset (the default) loads everything — fully backward compatible. This only affects which tools are advertised; enabled tools behave identically.
+Groups: `mail`, `rules`, `drafts`, `attachments`, `calendar`, `contacts`, `todo`, `folders`, `digest`, `delta`, `admin`. Unset (the default) loads everything — fully backward compatible. This only affects which tools are advertised; enabled tools behave identically.
 
 ### Two accounts, two instances (optional) — `OUTLOOK_MCP_CONFIG_DIR`
 
@@ -562,8 +562,8 @@ By default, `read_only: false` unlocks **all** write tools. For finer control, s
 
 | Category | Tools | Risk |
 |---|---|---|
-| `mail_drafts` | create/update/delete draft | Safe — drafts only, no send |
-| `mail_triage` | move, delete (soft), flag, categorize, mark read, copy, batch | Moderate — reversible except hard delete |
+| `mail_drafts` | create/update/delete draft, attach to/remove from a draft | Safe — drafts only, no send |
+| `mail_triage` | move, delete (soft), flag, categorize, mark read, copy, batch, reclassify and set/delete Focused Inbox overrides | Moderate — reversible except hard delete |
 | `mail_folders` | create/rename/delete folder | Moderate |
 | `mail_rules` | create/update/delete inbox rule | **Dangerous** — rules run server-side, so one keeps moving, forwarding or deleting mail with every client closed |
 | `mail_send` | send, reply, forward, send_draft, send_with_attachments | **Dangerous** — sends email on your behalf |
@@ -605,7 +605,7 @@ if the agent should set up meetings with other people, not just block out your o
 { "read_only": true }
 ```
 
-When `allow_categories` is set, any tool in a non-allowed category returns a permission-denied error (`PermissionDeniedError`) naming the blocked category. When `allow_categories` is empty (or unset) and `read_only` is false, all write tools are permitted. `read_only: true` always takes precedence — if set, all writes are blocked regardless of `allow_categories`. Unknown category names are rejected at config load time with a validation error; only the seven names above are accepted.
+When `allow_categories` is set, any tool in a non-allowed category returns a permission-denied error (`PermissionDeniedError`) naming the blocked category. When `allow_categories` is empty (or unset) and `read_only` is false, all write tools are permitted. `read_only: true` always takes precedence — if set, all writes are blocked regardless of `allow_categories`. Unknown category names are rejected at config load time with a validation error; only the eight names above are accepted.
 
 ---
 
@@ -649,6 +649,8 @@ uv run outlook-mcp
 - **Advanced mail** -- raw MIME export, internet message headers
 - **Calendar** -- cancel event (with attendee notification)
 - **Enterprise (Entra ID)** -- work/school account support
+
+Committed direction, and what was investigated and ruled out (inbox rules, mailbox settings), is in [ROADMAP.md](ROADMAP.md).
 
 ---
 

@@ -55,15 +55,53 @@ CHARS_PER_TOKEN = 4
 # the same 1.25.1 surface measured 13,243 there and 13,024 on 3.13, which strips
 # it. Compare numbers from here on only with each other. Ceiling unchanged.
 #
-# 14,127 on the 72-tool surface (re-measured after review): the four inbox-rule
-# tools (+4 schemas), of which `outlook_create_rule` is most of the cost — 14
-# optional arguments, the price of exposing Graph's whole predicate/action set in
-# one call. Review asked for one sentence in that docstring saying a rule outlives
-# the session (+24), which is worth paying: it is the write most likely to be
-# induced by the mail it acts on. `permanent_delete` came off the signature (-8).
-# Ceiling stays 14,400: ~1.9% headroom, room for a wording fix, not for another
-# batch.
-TOOL_SURFACE_CEILING = 14_400
+# 13,203 with the contact fixes, on the dedented measure: `job_title` on create
+# and update (#119), then `phone_type` on both and `title` on update (#120,
+# +101), then update's docstring saying `title` is the name prefix, as create's
+# does (+23) — undescribed, models fill it with the job (#119). No raise.
+#
+# 13,261 with `clear_phones` on `outlook_update_contact` and its one-line example
+# (+58): without it, moving a number from mobile to business left a copy in
+# mobile (#120 follow-up). No raise; ~39 tokens of headroom left.
+#
+# 13,298 with `calendar` on `outlook_create_event` (#141, +37): the argument and
+# one short line; that it takes a display name is in INSTRUCTIONS already, which
+# every session gets once. No raise; 2 tokens of headroom left.
+#
+# 13,308 once #146 (`outlook_read_message` takes a Message-ID, +10) and #147
+# (`calendar` on create, +37) landed together on 2026-10-23: each fit on its own,
+# the pair did not. Raised to 13,500 at merge time — a deliberate step for the
+# contributor batch reviewed that day, several of which carry their own raise to
+# the same number. The ~1% convention resumes from whatever the batch measures.
+#
+# 13,326 with `birthday` on `outlook_create_contact` (+31) and
+# `outlook_update_contact` (+34): the argument on each, and the words saying it is a
+# date, YYYY-MM-DD. `outlook_get_contact` already returned it; nothing could write
+# it. Two arguments do not fit the ~39 tokens left, so this is a deliberate raise to
+# 13,500: ~1% headroom, as before.
+#
+# 13,397 with `company` on `outlook_update_contact` (+25 on today's main, 13,372):
+# create set it and update could not, so a contact who changed employer kept the
+# old one (#173). The argument alone, no new words. No raise.
+#
+# 13,586 with `middle_name`, `personal_notes` and `categories` on
+# `outlook_create_contact` and `outlook_update_contact` (+189, on 13,397 with #174)
+# and update's sentence that `categories` replaces the whole list ([] clears it):
+# without it, adding one category with a one-item list drops the rest, silently.
+# `outlook_get_contact` returned categories and notes that nothing could write
+# (#175). Six arguments do not fit the ~100 tokens left, so this is a deliberate
+# raise to 13,700: ~0.8% headroom.
+#
+# 14,709 on the 72-tool surface, measured after the rebase onto that 13,586 main:
+# the four inbox-rule schemas (+1,123, ~281 each), of which `outlook_create_rule`
+# is most of it — 14 optional arguments, the price of exposing Graph's whole
+# predicate/action set in one call. Review asked for a sentence in both rule
+# docstrings saying a rule outlives the session, which is worth paying: a rule is
+# the write most likely to be induced by the mail it acts on. Deliberate raise to
+# 15,000: ~2% headroom, room for a wording fix, not for another batch. The rule
+# tools are their own `rules` toolset group, so a client that gates down to `mail`
+# does not pay this.
+TOOL_SURFACE_CEILING = 15_000
 
 # `prompts/list` is the cheap half of the bargain struck in 1.20.0: workflow
 # guidance costs a name and one line here until someone invokes it. If that ever
